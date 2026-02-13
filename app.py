@@ -1,373 +1,344 @@
+from __future__ import annotations
+
 import os
-import io
+import tempfile
+import zipfile
 import torch
-import torch.nn.functional as F
 import numpy as np
 import imageio.v3 as iio
-import cv2  # [필수] 16-bit PNG 저장을 위해 OpenCV 추가
-import streamlit as st
-from PIL import Image
-from streamlit_image_comparison import image_comparison
+import gradio as gr
 
 # Local Modules
 from config import Config
 from core.net import BakeNet
 from core.palette import Palette
-
-# -----------------------------------------------------------------------------
-# [1] Page Configuration & Styling
-# -----------------------------------------------------------------------------
-st.set_page_config(
-    page_title="Bake - Accurate Color Restoration",
-    page_icon="🔴",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# Custom CSS for Dark Minimalist Theme
-st.markdown(
-    """
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap');
-    
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-    }
-    
-    /* Brand Color: #D41201 */
-    .highlight {
-        color: #D41201;
-        font-weight: 600;
-    }
-    
-    /* Button Style */
-    div.stButton > button {
-        background-color: #D41201;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        padding: 0.5rem 1rem;
-        font-weight: 600;
-        transition: background-color 0.2s;
-    }
-    div.stButton > button:hover {
-        background-color: #FF1F0C;
-        border-color: #FF1F0C;
-    }
-    
-    /* Hide Streamlit Branding */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-</style>
-""",
-    unsafe_allow_html=True,
+from inference import (
+    auto_detect_bit_depth,
+    pad_image,
+    unpad_image,
+    save_tensor_to_16bit_png,
 )
 
 
-# -----------------------------------------------------------------------------
-# [2] Model Loading (Cached)
-# -----------------------------------------------------------------------------
-@st.cache_resource
-def load_model(ckpt_mtime):  # 인자 추가
-    """Load BakeNet (Reloads if ckpt_path modification time changes)"""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# =============================================================================
+# [1] Model Loading
+# =============================================================================
+_cache: dict = {}
 
-    # Initialize Model
-    model = BakeNet(dim=Config.INTERNAL_DIM).to(device)
 
-    # Load Checkpoint
+def _load_model():
+    """BakeNet 로드. 체크포인트 파일이 갱신되면 자동 재로드."""
     ckpt_path = Config.LAST_CKPT_PATH
 
     if not os.path.exists(ckpt_path):
-        return None, None, None, device
+        return None, None, None, None
+
+    mtime = os.path.getmtime(ckpt_path)
+    if _cache.get("mtime") == mtime:
+        return (
+            _cache["model"],
+            _cache["to_oklabp"],
+            _cache["to_rgb"],
+            _cache["device"],
+        )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = BakeNet(dim=Config.INTERNAL_DIM).to(device)
 
     try:
-        checkpoint = torch.load(ckpt_path, map_location=device)
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
-        # Load EMA if available (Preferred for inference)
-        if "ema_shadow" in checkpoint:
-            model.load_state_dict(checkpoint["ema_shadow"], strict=False)
+        if "ema_shadow" in ckpt:
+            model.load_state_dict(ckpt["ema_shadow"], strict=False)
         else:
-            model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+            model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
         model.eval()
-
-        # Converters
         to_oklabp = Palette.sRGBtoOklabP().to(device)
         to_rgb = Palette.OklabPtosRGB().to(device)
 
+        _cache.update(
+            mtime=mtime,
+            model=model,
+            to_oklabp=to_oklabp,
+            to_rgb=to_rgb,
+            device=device,
+        )
         return model, to_oklabp, to_rgb, device
 
     except Exception as e:
-        st.error(f"Failed to load checkpoint: {e}")
+        print(f"[Bake] Checkpoint load failed: {e}")
         return None, None, None, device
 
 
-# 전역 로드 (모델이 없으면 UI에서 처리)
-if os.path.exists(Config.LAST_CKPT_PATH):
-    mtime = os.path.getmtime(Config.LAST_CKPT_PATH)
-else:
-    mtime = 0
+def _model_status() -> str:
+    """현재 모델 상태 문자열."""
+    model, _, _, device = _load_model()
+    if model is not None:
+        return f"BakeNet Loaded | {device}"
+    return "Model Not Found -- checkpoints/last.pth 필요"
 
-model, to_oklabp, to_rgb, device = load_model(mtime)
 
-
-# -----------------------------------------------------------------------------
-# [3] Processing Logic
-# -----------------------------------------------------------------------------
-def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, device):
-    """
-    [Inference Pipeline]
-    Load -> Normalize -> Upscale(x2 Bilinear) -> Pad -> BakeNet -> Unpad -> Output
-    """
-    bytes_data = uploaded_file.getvalue()
-    filename = uploaded_file.name
-    ext = os.path.splitext(filename)[1]
-
-    # 1. Read Image
+# =============================================================================
+# [2] Image I/O
+# =============================================================================
+def _read_image(path: str) -> np.ndarray:
+    """이미지 파일 -> numpy (H,W,3). 알파 채널 자동 제거."""
+    ext = os.path.splitext(path)[1]
     try:
-        # imageio로 포맷 자동 감지하여 읽기
-        img_np = iio.imread(bytes_data, extension=ext)
-    except:
-        try:
-            # 실패 시 확장자 없이 바이트 스트림으로 시도
-            img_np = iio.imread(bytes_data)
-        except Exception as e:
-            return None, None, f"Error: {e}"
+        img = iio.imread(path, extension=ext)
+    except Exception:
+        img = iio.imread(path)
 
-    # Handle Alpha Channel (Drop it)
-    if img_np.ndim == 3 and img_np.shape[2] == 4:
-        img_np = img_np[:, :, :3]
+    if img.ndim == 3 and img.shape[2] == 4:
+        img = img[:, :, :3]
+    return img
 
-    img_float = img_np.astype(np.float32)
-    detected_msg = ""
 
-    # 2. Normalize based on Bit Depth
+def _normalize(img_np: np.ndarray, bit_depth: str) -> tuple[torch.Tensor, str]:
+    """numpy -> [0,1] 텐서 + 비트 심도 메시지."""
+    img_f = img_np.astype(np.float32)
+
     if img_np.dtype == np.uint16:
-        # 16-bit Container Logic
-        if bit_depth_option == "Auto":
-            max_val = img_np.max()
-            if max_val <= 1023:
-                depth = 10
-            elif max_val <= 4095:
-                depth = 12
-            elif max_val <= 16383:
-                depth = 14
-            else:
-                depth = 16
-            detected_msg = f"Auto-detected: {depth}-bit"
+        if bit_depth == "Auto":
+            depth = auto_detect_bit_depth(img_np)
+            msg = f"Auto {depth}-bit"
         else:
-            depth = int(bit_depth_option)
-            detected_msg = f"Manual Override: {depth}-bit"
-
-        img_float = img_float / ((2**depth) - 1)
+            depth = int(bit_depth)
+            msg = f"Manual {depth}-bit"
+        img_f /= (2**depth) - 1
 
     elif img_np.dtype == np.uint8:
-        # 8-bit
-        img_float = img_float / 255.0
-        detected_msg = "8-bit Source"
+        img_f /= 255.0
+        msg = "8-bit"
 
-    # To Tensor (HWC -> CHW)
-    input_tensor = torch.from_numpy(img_float).permute(2, 0, 1).unsqueeze(0).to(device)
-    input_tensor = input_tensor.clamp(0.0, 1.0)
-
-    # -------------------------------------------------------------------------
-
-    # 3. Padding (Reflect for even dims)
-    # 해상도를 기준으로 패딩 계산
-    _, _, h, w = input_tensor.shape
-    pad_h = 1 if (h % 2 != 0) else 0
-    pad_w = 1 if (w % 2 != 0) else 0
-
-    if pad_h + pad_w > 0:
-        input_padded = F.pad(input_tensor, (0, pad_w, 0, pad_h), mode="reflect")
     else:
-        input_padded = input_tensor
+        msg = f"{img_np.dtype}"
 
-    # 4. Inference
+    tensor = torch.from_numpy(img_f).permute(2, 0, 1).unsqueeze(0)
+    return tensor.clamp(0.0, 1.0), msg
+
+
+def _infer(tensor: torch.Tensor, model, to_oklabp, to_rgb, device) -> torch.Tensor:
+    """BakeNet 추론. sRGB [0,1] -> 복원 sRGB [0,1]."""
+    tensor = tensor.to(device)
+    padded, org_size = pad_image(tensor)
+
     with torch.no_grad():
-        input_oklabp = to_oklabp(input_padded)
-        output_oklabp = model(input_oklabp)
-        output_rgb = to_rgb(output_oklabp)
+        oklabp = to_oklabp(padded)
+        restored = model(oklabp)
+        rgb = to_rgb(restored)
 
-    # 5. Unpad & Clamp
-    # 패딩된 부분 잘라내기
-    output_rgb = output_rgb[:, :, :h, :w].clamp(0.0, 1.0)
-
-    # 비교 슬라이더의 1:1 매칭 보장
-    return input_tensor.cpu(), output_rgb.cpu(), detected_msg
+    return unpad_image(rgb, org_size).clamp(0.0, 1.0).cpu()
 
 
-def to_display_image(tensor):
-    """
-    [For Web Display]
-    Tensor(0~1) -> Numpy(0~255 uint8)
-    웹 브라우저는 16비트를 표시 못 하므로 8비트로 변환
-    """
-    img = tensor.squeeze(0).permute(1, 2, 0).numpy()
-    return (img * 255.0).astype(np.uint8)
-
-
-def to_download_bytes(tensor):
-    """
-    [For Download]
-    Tensor(0~1) -> 16-bit PNG Bytes
-    사용자에게는 무손실 16비트 결과물을 제공 (OpenCV 사용)
-    """
-    # 1. Tensor (1, 3, H, W) -> Numpy (H, W, 3)
-    img_np = tensor.squeeze(0).permute(1, 2, 0).numpy()
-
-    # 2. RGB -> BGR 변환 (OpenCV는 BGR 순서를 사용)
-    img_bgr = img_np[..., ::-1]
-
-    # 3. Scale to 16-bit Integer
-    img_uint16 = (img_bgr * 65535.0).astype(np.uint16)
-
-    # 4. Encode to PNG using OpenCV
-    is_success, buffer = cv2.imencode(".png", img_uint16)
-
-    if not is_success:
-        return None
-
-    # 5. Return as BytesIO
-    # buffer는 numpy array 형태이므로 tobytes()로 바이트 변환
-    return io.BytesIO(buffer.tobytes())
-
-
-# -----------------------------------------------------------------------------
-# [4] UI Layout
-# -----------------------------------------------------------------------------
-
-# Sidebar Controls
-with st.sidebar:
-    st.header("Bake Settings")
-
-    st.markdown("---")
-    st.subheader("Input Bit Depth")
-    bit_option = st.selectbox(
-        "Source Processing Mode",
-        ["Auto", "10", "12", "14", "16", "8"],
-        index=0,
-        help="Use 'Auto' for most cases. Manually select if your dark 10/12-bit footage is misdetected.",
+def _to_display(tensor: torch.Tensor) -> np.ndarray:
+    """텐서 (1,3,H,W) [0,1] -> numpy (H,W,3) uint8."""
+    return (
+        tensor.squeeze(0)
+        .permute(1, 2, 0)
+        .mul(255.0)
+        .clamp(0, 255)
+        .byte()
+        .numpy()
     )
 
-    if bit_option == "Auto":
-        st.info("💡 Auto-detects bit depth based on pixel intensity.")
-    else:
-        st.warning(f"⚠️ Forcing {bit_option}-bit interpretation.")
 
-    st.markdown("---")
-    st.markdown("### System Status")
-    if model is not None:
-        st.success("🟢 BakeNet Loaded")
-        st.caption(f"Running on: {device}")
-    else:
-        st.error("🔴 Model Not Found")
-        st.caption("Please place 'last.pth' in checkpoints/")
+# =============================================================================
+# [3] Processing
+# =============================================================================
+def process_single(image_path: str | None, bit_depth: str):
+    """단일 이미지 처리 -> (before, after, download_path, status)."""
+    if image_path is None:
+        raise gr.Error("이미지를 업로드해 주세요.")
+
+    model, to_oklabp, to_rgb, device = _load_model()
+    if model is None:
+        raise gr.Error("BakeNet을 로드할 수 없습니다. checkpoints/last.pth를 확인하세요.")
+
+    try:
+        img_np = _read_image(image_path)
+        input_tensor, msg = _normalize(img_np, bit_depth)
+        output_tensor = _infer(input_tensor, model, to_oklabp, to_rgb, device)
+    except gr.Error:
+        raise
+    except Exception as e:
+        torch.cuda.empty_cache()
+        raise gr.Error(f"처리 실패: {e}")
+
+    before = _to_display(input_tensor)
+    after = _to_display(output_tensor)
+
+    # 16-bit PNG 다운로드 파일 생성
+    tmp = tempfile.NamedTemporaryFile(suffix="_bake_16bit.png", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    save_tensor_to_16bit_png(output_tensor, tmp_path)
+
+    return before, after, tmp_path, f"Done. ({msg})"
 
 
-# Main Area
-st.title("Bake")
-st.markdown("#### Accurate, therefore beautiful.")
-st.markdown("AI-Powered 10-bit/12-bit Color Restoration (with x2 Upscaling)")
-st.markdown("---")
+def process_batch(
+    files: list[str] | None,
+    bit_depth: str,
+    progress=gr.Progress(),
+):
+    """배치 처리 -> (gallery, zip_path, status)."""
+    if not files:
+        raise gr.Error("파일을 업로드해 주세요.")
 
-uploaded_file = st.file_uploader(
-    "Upload Frame (PNG, TIFF, JPG, DPX)",
-    type=["png", "jpg", "jpeg", "tif", "tiff", "dpx"],
+    model, to_oklabp, to_rgb, device = _load_model()
+    if model is None:
+        raise gr.Error("BakeNet을 로드할 수 없습니다. checkpoints/last.pth를 확인하세요.")
+
+    tmp_dir = tempfile.mkdtemp(prefix="bake_batch_")
+    gallery: list[tuple[np.ndarray, str]] = []
+    processed = 0
+
+    for file_path in progress.tqdm(files, desc="Processing"):
+        name = os.path.splitext(os.path.basename(file_path))[0]
+        try:
+            img_np = _read_image(file_path)
+            tensor, _ = _normalize(img_np, bit_depth)
+            result = _infer(tensor, model, to_oklabp, to_rgb, device)
+
+            save_tensor_to_16bit_png(
+                result, os.path.join(tmp_dir, f"{name}_bake.png")
+            )
+            gallery.append((_to_display(result), name))
+            processed += 1
+        except Exception as e:
+            print(f"[Bake] Skip {name}: {e}")
+            torch.cuda.empty_cache()
+
+    # ZIP 생성
+    zip_path = os.path.join(tmp_dir, "bake_results.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in os.listdir(tmp_dir):
+            if fname.endswith("_bake.png"):
+                zf.write(os.path.join(tmp_dir, fname), fname)
+
+    return gallery, zip_path, f"Done. {processed}/{len(files)} processed."
+
+
+# =============================================================================
+# [4] Theme
+# =============================================================================
+theme = gr.themes.Base(
+    primary_hue=gr.themes.Color(
+        c50="#FEF2F2",
+        c100="#FEE2E2",
+        c200="#FECACA",
+        c300="#FCA5A5",
+        c400="#F87171",
+        c500="#EF4444",
+        c600="#D41201",
+        c700="#B91C1C",
+        c800="#991B1B",
+        c900="#7F1D1D",
+        c950="#450A0A",
+    ),
+    font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
 )
 
-if uploaded_file is not None:
-    if model is None:
-        st.error("BakeNet model is not loaded. Cannot process image.")
-    else:
-        # Processing Indicator
-        with st.spinner("Baking... Recovering lost gradients and details."):
 
-            # Run Pipeline
-            input_t, output_t, msg = process_image(
-                uploaded_file, bit_option, model, to_oklabp, to_rgb, device
+# =============================================================================
+# [5] UI
+# =============================================================================
+with gr.Blocks(theme=theme, title="Bake") as demo:
+
+    gr.Markdown("# Bake\n*Accurate, therefore beautiful.*")
+
+    with gr.Tabs():
+        # ---- Single Image ----
+        with gr.TabItem("Single Image"):
+            with gr.Row():
+                with gr.Column(scale=3):
+                    single_input = gr.Image(
+                        type="filepath",
+                        label="Upload Image",
+                        sources=["upload"],
+                    )
+                with gr.Column(scale=1):
+                    single_bit = gr.Dropdown(
+                        choices=["Auto", "8", "10", "12", "14", "16"],
+                        value="Auto",
+                        label="Bit Depth",
+                        info="Auto: 픽셀 강도 기반 자동 감지. 어두운 10/12-bit 소스는 수동 지정 권장.",
+                    )
+                    single_btn = gr.Button("Process", variant="primary")
+                    single_status = gr.Textbox(
+                        label="Status", interactive=False
+                    )
+
+            with gr.Row():
+                single_before = gr.Image(label="Before", interactive=False)
+                single_after = gr.Image(label="After", interactive=False)
+
+            single_download = gr.File(
+                label="16-bit PNG Download", interactive=False
             )
 
-            if input_t is not None:
-                st.success(f"Processing Complete! {msg}")
-                st.markdown("---")
+            single_btn.click(
+                fn=process_single,
+                inputs=[single_input, single_bit],
+                outputs=[
+                    single_before,
+                    single_after,
+                    single_download,
+                    single_status,
+                ],
+            )
 
-                # A. Comparison Slider
-                st.subheader("Before / After Comparison")
-                st.caption("Slide to see the restored gradients (x2 Upscaled View)")
-
-                img_before = to_display_image(input_t)
-                img_after = to_display_image(output_t)
-
-                # Image Comparison Component
-                image_comparison(
-                    img1=img_before,
-                    img2=img_after,
-                    label1="Original (x2 Bilinear)",
-                    label2="Baked (Restored)",
-                    width=700,
-                    starting_position=50,
-                    show_labels=True,
-                    make_responsive=True,
-                    in_memory=True,
-                )
-
-                st.markdown("---")
-
-                # B. Download Section
-                st.subheader("Export Result")
-
-                # 컬럼을 나누어 원본(Upscaled)과 결과물 모두 다운로드 가능하게 배치
-                col1, col2, col3 = st.columns([1, 1, 2])
-
-                with col1:
-                    st.download_button(
-                        label="⬇️ Download Output",
-                        data=to_download_bytes(output_t),
-                        file_name="bake_result_16bit.png",
-                        mime="image/png",
-                        use_container_width=True,
+        # ---- Batch Processing ----
+        with gr.TabItem("Batch Processing"):
+            with gr.Row():
+                with gr.Column(scale=3):
+                    batch_input = gr.File(
+                        file_count="multiple",
+                        label="Upload Images (PNG, TIFF, JPG, DPX)",
+                        file_types=[
+                            ".png",
+                            ".jpg",
+                            ".jpeg",
+                            ".tif",
+                            ".tiff",
+                            ".dpx",
+                        ],
+                    )
+                with gr.Column(scale=1):
+                    batch_bit = gr.Dropdown(
+                        choices=["Auto", "8", "10", "12", "14", "16"],
+                        value="Auto",
+                        label="Bit Depth",
+                        info="시퀀스 작업 시 수동 지정으로 플리커 방지.",
+                    )
+                    batch_btn = gr.Button("Process All", variant="primary")
+                    batch_status = gr.Textbox(
+                        label="Status", interactive=False
                     )
 
-                with col2:
-                    st.download_button(
-                        label="⬇️ Download Input",
-                        data=to_download_bytes(input_t),
-                        file_name="bake_input_bilinear_16bit.png",
-                        mime="image/png",
-                        use_container_width=True,
-                    )
+            batch_gallery = gr.Gallery(
+                label="Results",
+                columns=4,
+                object_fit="contain",
+                height="auto",
+            )
+            batch_download = gr.File(
+                label="Download All (ZIP)", interactive=False
+            )
 
-                with col3:
-                    st.info(
-                        "**Professional Export:** Both files are **16-bit PNGs** (x2 Upscaled). "
-                        "'Input' is Bilinear scaled, 'Output' is BakeNet restored."
-                    )
+            batch_btn.click(
+                fn=process_batch,
+                inputs=[batch_input, batch_bit],
+                outputs=[batch_gallery, batch_download, batch_status],
+            )
 
-            else:
-                st.error(f"Processing Failed: {msg}")
+    gr.Markdown(f"---\nBake v5 | {_model_status()}")
 
-else:
-    # Landing Page Description
-    st.info("👋 Welcome! Upload a frame to start restoring colors.")
 
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown("**🎨 Oklab Precision**")
-        st.caption(
-            "Perceptually accurate color handling exactly as the human eye sees."
-        )
-
-    with col2:
-        st.markdown("**🔧 10/12-bit Support**")
-        st.caption("Designed for professional Log footage and high-bit workflows.")
-
-    with col3:
-        st.markdown("**✨ Structure Recovery**")
-        st.caption("Removes banding artifacts and restores smooth gradients.")
-
-# Footer
-st.markdown("---")
-st.caption("Bake v4 | Research & Production Code | Developed for Creators")
+# =============================================================================
+# [6] Launch
+# =============================================================================
+if __name__ == "__main__":
+    demo.launch()
