@@ -10,7 +10,7 @@ from PIL import Image
 class BakeDataset(Dataset):
     """
     [Lightweight Dataset Loader]
-    - CPU Heavy Task 제거 (JPEG, Noise 등은 GPU Augmentor로 이관)
+    - CPU Heavy Task 제거 (열화는 GPU Augmentor로 이관)
     - 역할: Image Read -> Random Crop -> ToTensor
     """
 
