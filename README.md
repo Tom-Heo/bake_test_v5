@@ -37,7 +37,7 @@ bake_test_v5/
 **요구 사항**: Python 3.9+, CUDA 지원 GPU
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/Tom-Heo/bake_test_v5.git
 cd bake_test_v5
 pip install -r requirements.txt
 ```
