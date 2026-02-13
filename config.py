@@ -5,7 +5,7 @@ class Config:
     # -------------------------------------------------------------------------
     # [Path Settings]
     # -------------------------------------------------------------------------
-    TRAIN_DATA_ROOT = os.path.join("data", "paris")
+    TRAIN_DATA_ROOT = os.path.join("dataset", "paris")
 
     # 체크포인트 및 로그 저장 경로
     CHECKPOINT_DIR = "checkpoints"
