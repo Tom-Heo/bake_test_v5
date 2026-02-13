@@ -25,11 +25,17 @@ def train(args):
     Config.create_directories()
 
     logger = get_logger(Config.LOG_DIR)
-    device = torch.device(Config.DEVICE)
+    device = (
+        torch.device(Config.DEVICE)
+        if torch.cuda.is_available()
+        else torch.device("cpu")
+    )
 
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
         logger.info("Cudnn Benchmark Enabled.")
+    else:
+        logger.warning("CUDA not available. Falling back to CPU.")
 
     logger.info(f"Initialize Bake Training on {device}")
 
@@ -104,7 +110,7 @@ def train(args):
 
     # Load Checkpoint
     if should_load and os.path.exists(ckpt_path):
-        ckpt = torch.load(ckpt_path, map_location=device)
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"])
 
         if "ema_shadow" in ckpt:
@@ -148,6 +154,7 @@ def train(args):
             # Backward
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             # Update
@@ -181,7 +188,7 @@ def train(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Bake v4 Training Script")
+    parser = argparse.ArgumentParser(description="Bake v5 Training Script")
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(

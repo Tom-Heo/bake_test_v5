@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
-from core.bake import OklabPtoBakedLossColor
-from core.heo import Heo
+from .bake import OklabPtoBakedLossColor
+from .heo import Heo
 
 
 class BakeLoss(nn.Module):
     """
-    [BakeLoss v4]
+    [BakeLoss v5]
     Hyper-Baked Robust Loss (Log-Charbonnier)
 
     Architecture:

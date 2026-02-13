@@ -118,7 +118,7 @@ def inference(args):
         return
 
     try:
-        checkpoint = torch.load(args.checkpoint, map_location=device)
+        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
 
         # [수정] strict=False 적용하여 로딩 유연성 확보
         if "ema_shadow" in checkpoint:
@@ -204,7 +204,7 @@ def inference(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Bake v4 Inference")
+    parser = argparse.ArgumentParser(description="Bake v5 Inference")
     parser.add_argument(
         "--input", type=str, required=True, help="Input file or directory"
     )

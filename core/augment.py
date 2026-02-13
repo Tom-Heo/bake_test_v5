@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import random
 
-from core.palette import Palette
+from .palette import Palette
 
 
 class BakeAugment(nn.Module):
