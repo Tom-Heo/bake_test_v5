@@ -41,7 +41,7 @@ class Config:
     SCHEDULER_GAMMA = 0.999996  # 아주 천천히 떨어지는 학습률
 
     # 주기 설정
-    LOG_INTERVAL_STEPS = 50  # 50 스텝마다 로그 출력
+    LOG_INTERVAL_STEPS = 16  # 16 스텝마다 로그 출력
     VALID_INTERVAL_EPOCHS = 1  # 1 에폭마다 체크포인트 저장
 
     # -------------------------------------------------------------------------
