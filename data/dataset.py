@@ -6,6 +6,8 @@ from torch.utils.data import Dataset
 from torchvision.transforms import functional as TF
 from PIL import Image
 
+Image.MAX_IMAGE_PIXELS = None
+
 
 class BakeDataset(Dataset):
     """
@@ -37,6 +39,15 @@ class BakeDataset(Dataset):
     def __len__(self):
         return len(self.image_files)
 
+    def _get_scale_factor(self, w: int, h: int) -> int:
+        long_side = max(w, h)
+        if long_side >= 7680:
+            return 6
+        elif long_side >= 3840:
+            return 3
+        else:
+            return 2
+
     def _get_random_crop(self, img: Image.Image, size=512) -> Image.Image:
         """
         [CPU-Side Crop]
@@ -62,10 +73,10 @@ class BakeDataset(Dataset):
         img_name = self.image_files[idx]
         img_path = os.path.join(self.root_dir, img_name)
 
-        # PIL Image Load (RGB) + 1/3 Downscale
         img = Image.open(img_path).convert("RGB")
         w, h = img.size
-        img = img.resize((w // 3, h // 3), Image.LANCZOS)
+        scale = self._get_scale_factor(w, h)
+        img = img.resize((w // scale, h // scale), Image.LANCZOS)
 
         # Random Crop -> Tensor
         # (복잡한 열화 및 증강은 GPU의 augment.py에서 수행)
