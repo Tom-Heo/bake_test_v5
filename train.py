@@ -67,7 +67,8 @@ def train(args):
 
     # Scheduler Setup
     warmup_epochs = 50
-    total_warmup_iters = warmup_epochs * len(train_loader)
+    steps_per_epoch = len(train_loader) // Config.ACCUM_STEPS
+    total_warmup_iters = warmup_epochs * steps_per_epoch
 
     scheduler_warmup = LinearLR(
         optimizer, start_factor=0.01, total_iters=total_warmup_iters
@@ -125,52 +126,60 @@ def train(args):
     # 4. Training Loop
     logger.info(">>> Start Training Loop (No Validation Mode) <<<")
 
+    accum_steps = Config.ACCUM_STEPS
+
     for epoch in range(start_epoch, Config.TOTAL_EPOCHS + 1):
         model.train()
         epoch_loss = 0.0
+        optimizer.zero_grad()
+        opt_step = 0
+        accum_loss = 0.0
+        accum_count = 0
 
         for step, clean_batch in enumerate(train_loader, 1):
-            # 1. Move to GPU
             clean_batch = clean_batch.to(device)
 
-            # 2. On-the-fly Degradation & Augmentation (returns OklabP directly)
             with torch.no_grad():
                 input_oklabp, target_oklabp = augmentor(clean_batch)
 
-            # 3. Forward
             pred_oklabp = model(input_oklabp)
-
-            # 4. Loss
             loss = criterion(pred_oklabp, target_oklabp)
 
-            # Safety Check
             if torch.isnan(loss):
                 logger.error(
                     f"[CRITICAL] NaN Loss at Epoch {epoch} Step {step}. Skipping."
                 )
-                optimizer.zero_grad()
                 continue
 
-            # Backward
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-
-            # Update
-            model_ema.update(model)
-            scheduler.step()
-
+            scaled_loss = loss / accum_steps
+            scaled_loss.backward()
             epoch_loss += loss.item()
+            accum_loss += loss.item()
+            accum_count += 1
 
-            if step % Config.LOG_INTERVAL_STEPS == 0:
-                current_lr = optimizer.param_groups[0]["lr"]
-                logger.info(
-                    f"Epoch [{epoch}/{Config.TOTAL_EPOCHS}] "
-                    f"Step [{step}/{len(train_loader)}] "
-                    f"Loss: {loss.item():.6f} "
-                    f"LR: {current_lr:.2e}"
-                )
+            is_accum_boundary = (step % accum_steps == 0)
+            is_last_step = (step == len(train_loader))
+
+            if is_accum_boundary or is_last_step:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                optimizer.zero_grad()
+                model_ema.update(model)
+                scheduler.step()
+                opt_step += 1
+
+                window_loss = accum_loss / accum_count
+                accum_loss = 0.0
+                accum_count = 0
+
+                if opt_step % Config.LOG_INTERVAL_STEPS == 0:
+                    current_lr = optimizer.param_groups[0]["lr"]
+                    logger.info(
+                        f"Epoch [{epoch}/{Config.TOTAL_EPOCHS}] "
+                        f"OptStep [{opt_step}/{steps_per_epoch}] "
+                        f"Loss: {window_loss:.6f} "
+                        f"LR: {current_lr:.2e}"
+                    )
 
         avg_loss = epoch_loss / len(train_loader)
         logger.info(f"==> Epoch {epoch} Finished. Avg Loss: {avg_loss:.6f}")

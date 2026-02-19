@@ -20,6 +20,9 @@ class Config:
     # -------------------------------------------------------------------------
     # v5 모델의 Body 연산량과 96ch Loss 메모리 부하를 고려하여 안정적인 1로 설정
     BATCH_SIZE = 1
+    ACCUM_STEPS = (
+        16  # Gradient Accumulation: effective batch size = BATCH_SIZE * ACCUM_STEPS
+    )
     NUM_WORKERS = 4  # 데이터 로더 워커 수
 
     # -------------------------------------------------------------------------
@@ -41,7 +44,7 @@ class Config:
     SCHEDULER_GAMMA = 0.999996  # 아주 천천히 떨어지는 학습률
 
     # 주기 설정
-    LOG_INTERVAL_STEPS = 16  # 16 스텝마다 로그 출력
+    LOG_INTERVAL_STEPS = 1  # N optimizer step마다 로그 출력
     VALID_INTERVAL_EPOCHS = 1  # 1 에폭마다 체크포인트 저장
 
     # -------------------------------------------------------------------------
