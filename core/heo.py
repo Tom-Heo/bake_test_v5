@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from math import sqrt
+import math
 
 
 class Heo:
@@ -253,7 +254,7 @@ class Heo:
             return x
 
     class SharpLoss(nn.Module):
-        def __init__(self, epsilon=0.001):
+        def __init__(self, epsilon=1 / (math.e - 1)):
             super().__init__()
             self.epsilon = epsilon
             self.epsilon_char = 1e-8
@@ -263,8 +264,14 @@ class Heo:
             target = target.float()
 
             diff = pred - target
+            abs_diff = diff.abs()
+
             charbonnier = torch.sqrt(diff**2 + self.epsilon_char**2)
 
-            loss = torch.log(1 + charbonnier / self.epsilon)
+            sharp_loss = torch.log(1 + charbonnier / self.epsilon)
+
+            l2_loss = diff**2
+
+            loss = torch.where(abs_diff <= 1.0, sharp_loss, l2_loss)
 
             return loss.mean()
