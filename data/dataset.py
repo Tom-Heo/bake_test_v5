@@ -62,8 +62,10 @@ class BakeDataset(Dataset):
         img_name = self.image_files[idx]
         img_path = os.path.join(self.root_dir, img_name)
 
-        # PIL Image Load (RGB)
+        # PIL Image Load (RGB) + 1/2 Downscale
         img = Image.open(img_path).convert("RGB")
+        w, h = img.size
+        img = img.resize((w // 2, h // 2), Image.LANCZOS)
 
         # Random Crop -> Tensor
         # (복잡한 열화 및 증강은 GPU의 augment.py에서 수행)
