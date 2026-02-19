@@ -11,7 +11,7 @@ class BakeLoss(nn.Module):
 
     Architecture:
     - Projection: core.bake.OklabPtoBakedLossColor (3ch -> 96ch)
-    - Metric: core.heo.Heo.SharpLoss (Log-Charbonnier)
+    - Metric: core.heo.Heo.HeoLoss (Log-Charbonnier)
     """
 
     def __init__(self):
@@ -27,7 +27,7 @@ class BakeLoss(nn.Module):
 
         # 2. Loss Calculator
         # heo.py에 정의된 Robust Loss 활용 (epsilon=1e-3)
-        self.criterion = Heo.SharpLoss(epsilon=1e-3)
+        self.criterion = Heo.HeoLoss(epsilon=1e-3)
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
@@ -42,7 +42,7 @@ class BakeLoss(nn.Module):
         with torch.no_grad():
             target_baked = self.projector(target)
 
-        # B. Calculate SharpLoss
+        # B. Calculate HeoLoss
         # 96채널 전체에 대해 Robust Loss 계산
         loss = self.criterion(pred_baked, target_baked)
 

@@ -253,7 +253,42 @@ class Heo:
 
             return x
 
-    class SharpLoss(nn.Module):
+    class NeMO1111(nn.Module):
+        def __init__(self, dim: int):
+            super().__init__()
+
+            self.conv0 = nn.Conv2d(dim, dim, 11, 1, 5)
+            self.conv1 = nn.Conv2d(dim, dim, 1, 1)
+            self.conv2 = nn.Conv2d(dim, dim, 1, 1)
+
+            self.act0 = Heo.HeLU2d(dim)
+            self.act1 = Heo.HeLU2d(dim)
+            self.act2 = Heo.HeLU2d(dim)
+
+            self.gate0 = Heo.HeoGate2d(dim)
+            self.gate1 = Heo.HeoGate2d(dim)
+            self.gate2 = Heo.HeoGate2d(dim)
+
+        def forward(self, x: torch.Tensor):
+
+            raw = x
+            x = self.conv0(x)
+            x = self.act0(x)
+            x = self.gate0(x, raw)
+
+            x0 = x
+            x = self.conv1(x)
+            x = self.act1(x)
+            x = self.gate1(x, x0)
+
+            x1 = x
+            x = self.conv2(x)
+            x = self.act2(x)
+            x = self.gate2(x, x1)
+
+            return x
+
+    class HeoLoss(nn.Module):
         def __init__(self, epsilon=1 / (math.e - 1)):
             super().__init__()
             self.epsilon = epsilon

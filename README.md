@@ -24,7 +24,7 @@ bake_test_v5/
 |-- data/
 |   |-- dataset.py     # BakeDataset (sRGB 이미지 로더)
 |-- core/
-    |-- heo.py         # 기반 연산 (HeoGate2d, NeMO, SharpLoss 등)
+    |-- heo.py         # 기반 연산 (HeoGate2d, NeMO, HeoLoss 등)
     |-- bake.py        # Baked Color 변환 모듈 (RBF 기반 색상 투영)
     |-- net.py         # BakeNet (Stem - Body 50블록 - Head)
     |-- loss.py        # BakeLoss (96ch 투영 + Log-Charbonnier)

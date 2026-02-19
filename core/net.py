@@ -33,8 +33,14 @@ class BakeNet(nn.Module):
         self.context_gates = nn.ModuleList([Heo.HeoGate2d(dim) for _ in range(depth)])
 
         # C. NeMO Blocks (50개)
-        # 국소적 디테일 복원
-        self.nemo_modules = nn.ModuleList([Heo.NeMO99(dim) for _ in range(depth)])
+        # 국소적 디테일 복원 — 대칭 커널 패턴 (3→5→7→9→11→11→9→7→5→3) x5
+        _nemo_cycle = [
+            Heo.NeMO33, Heo.NeMO55, Heo.NeMO77, Heo.NeMO99, Heo.NeMO1111,
+            Heo.NeMO1111, Heo.NeMO99, Heo.NeMO77, Heo.NeMO55, Heo.NeMO33,
+        ]
+        self.nemo_modules = nn.ModuleList(
+            [cls(dim) for cls in _nemo_cycle for _ in range(depth // 10)]
+        )
 
         # D. Residual Gates (50개)
         # 연산 전후의 차이를 학습 (Gradient Flow 보장)
