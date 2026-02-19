@@ -20,7 +20,7 @@ class BakeAugment(nn.Module):
     # -----------------------------------------------------------------
     # OklabP Random Curve Degradation
     # -----------------------------------------------------------------
-    def _make_random_curve(self, n_ctrl=39, strength=0.05, device="cpu"):
+    def _make_random_curve(self, n_ctrl=199, strength=0.10, device="cpu"):
         """
         Random Monotonic Piecewise-Linear Curve [-1, 1] -> [-1, 1].
         Returns (ctrl_x, ctrl_y) each of shape (n_ctrl + 2,).
@@ -55,7 +55,7 @@ class BakeAugment(nn.Module):
         Random Per-Channel Curve Distortion in OklabP Space.
         Input / Output: (B, 3, H, W) OklabP [-1, 1]
         """
-        strengths = [0.20, 0.10, 0.10]  # Lp / ap / bp
+        strengths = [0.25, 0.15, 0.15]  # Lp / ap / bp
         for ch in range(3):
             ctrl_x, ctrl_y = self._make_random_curve(
                 n_ctrl=5, strength=strengths[ch], device=oklabp.device
