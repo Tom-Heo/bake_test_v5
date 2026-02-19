@@ -118,7 +118,9 @@ def inference(args):
         return
 
     try:
-        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+        checkpoint = torch.load(
+            args.checkpoint, map_location=device, weights_only=False
+        )
 
         # [수정] strict=False 적용하여 로딩 유연성 확보
         if "ema_shadow" in checkpoint:
@@ -175,7 +177,11 @@ def inference(args):
             # C. Inference
             with torch.no_grad():
                 input_oklabp = to_oklabp(input_padded)
-                output_oklabp = model(input_oklabp)
+                x = model(input_oklabp)
+                x = model(x)
+                x = model(x)
+                x = model(x)
+                output_oklabp = model(x)
                 output_rgb = to_rgb(output_oklabp)
 
             # D. Unpad
