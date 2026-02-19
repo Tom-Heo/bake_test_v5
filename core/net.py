@@ -35,8 +35,16 @@ class BakeNet(nn.Module):
         # C. NeMO Blocks (50개)
         # 국소적 디테일 복원 — 대칭 커널 패턴 (3→5→7→9→11→11→9→7→5→3) x5
         _nemo_cycle = [
-            Heo.NeMO33, Heo.NeMO55, Heo.NeMO77, Heo.NeMO99, Heo.NeMO1111,
-            Heo.NeMO1111, Heo.NeMO99, Heo.NeMO77, Heo.NeMO55, Heo.NeMO33,
+            Heo.NeMO33,
+            Heo.NeMO55,
+            Heo.NeMO77,
+            Heo.NeMO99,
+            Heo.NeMO1111,
+            Heo.NeMO1111,
+            Heo.NeMO99,
+            Heo.NeMO77,
+            Heo.NeMO55,
+            Heo.NeMO33,
         ]
         self.nemo_modules = nn.ModuleList(
             [cls(dim) for cls in _nemo_cycle for _ in range(depth // 10)]
@@ -89,5 +97,5 @@ class BakeNet(nn.Module):
             # 4. Residual Connection
             feat = self.residual_gates[i](nemo_out, gated_input)
 
-        # D. Head
-        return self.head(feat)
+        # D. Residual + Head (0.2x Boost)
+        return x + 0.2 * self.head(feat)
