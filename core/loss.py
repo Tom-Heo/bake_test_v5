@@ -26,8 +26,8 @@ class BakeLoss(nn.Module):
             param.requires_grad = False
 
         # 2. Loss Calculator
-        # heo.py에 정의된 Robust Loss 활용 (epsilon=1e-3)
-        self.criterion = Heo.HeoLoss(epsilon=1e-3)
+        # heo.py에 정의된 Robust Loss 활용
+        self.criterion = Heo.HeoLoss()
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
