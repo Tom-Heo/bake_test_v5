@@ -127,6 +127,10 @@ def _infer(tensor: torch.Tensor, model, to_oklabp, to_rgb, device) -> torch.Tens
     with torch.no_grad():
         oklabp = to_oklabp(padded)
         restored = model(oklabp)
+        restored = model(restored)
+        restored = model(restored)
+        restored = model(restored)
+        restored = model(restored)
         rgb = to_rgb(restored)
 
     return unpad_image(rgb, org_size).clamp(0.0, 1.0).cpu()
@@ -134,14 +138,7 @@ def _infer(tensor: torch.Tensor, model, to_oklabp, to_rgb, device) -> torch.Tens
 
 def _to_display(tensor: torch.Tensor) -> np.ndarray:
     """텐서 (1,3,H,W) [0,1] -> numpy (H,W,3) uint8."""
-    return (
-        tensor.squeeze(0)
-        .permute(1, 2, 0)
-        .mul(255.0)
-        .clamp(0, 255)
-        .byte()
-        .numpy()
-    )
+    return tensor.squeeze(0).permute(1, 2, 0).mul(255.0).clamp(0, 255).byte().numpy()
 
 
 # =============================================================================
@@ -154,7 +151,9 @@ def process_single(image_path: str | None, bit_depth: str):
 
     model, to_oklabp, to_rgb, device = _load_model()
     if model is None:
-        raise gr.Error("BakeNet을 로드할 수 없습니다. checkpoints/last.pth를 확인하세요.")
+        raise gr.Error(
+            "BakeNet을 로드할 수 없습니다. checkpoints/last.pth를 확인하세요."
+        )
 
     try:
         img_np = _read_image(image_path)
@@ -189,7 +188,9 @@ def process_batch(
 
     model, to_oklabp, to_rgb, device = _load_model()
     if model is None:
-        raise gr.Error("BakeNet을 로드할 수 없습니다. checkpoints/last.pth를 확인하세요.")
+        raise gr.Error(
+            "BakeNet을 로드할 수 없습니다. checkpoints/last.pth를 확인하세요."
+        )
 
     tmp_dir = tempfile.mkdtemp(prefix="bake_batch_")
     gallery: list[tuple[np.ndarray, str]] = []
@@ -202,9 +203,7 @@ def process_batch(
             tensor, _ = _normalize(img_np, bit_depth)
             result = _infer(tensor, model, to_oklabp, to_rgb, device)
 
-            save_tensor_to_16bit_png(
-                result, os.path.join(tmp_dir, f"{name}_bake.png")
-            )
+            save_tensor_to_16bit_png(result, os.path.join(tmp_dir, f"{name}_bake.png"))
             gallery.append((_to_display(result), name))
             processed += 1
         except Exception as e:
@@ -267,17 +266,13 @@ with gr.Blocks(theme=theme, title="Bake") as demo:
                         info="Auto: 픽셀 강도 기반 자동 감지. 어두운 10/12-bit 소스는 수동 지정 권장.",
                     )
                     single_btn = gr.Button("Process", variant="primary")
-                    single_status = gr.Textbox(
-                        label="Status", interactive=False
-                    )
+                    single_status = gr.Textbox(label="Status", interactive=False)
 
             with gr.Row():
                 single_before = gr.Image(label="Before", interactive=False)
                 single_after = gr.Image(label="After", interactive=False)
 
-            single_download = gr.File(
-                label="16-bit PNG Download", interactive=False
-            )
+            single_download = gr.File(label="16-bit PNG Download", interactive=False)
 
             single_btn.click(
                 fn=process_single,
@@ -314,9 +309,7 @@ with gr.Blocks(theme=theme, title="Bake") as demo:
                         info="시퀀스 작업 시 수동 지정으로 플리커 방지.",
                     )
                     batch_btn = gr.Button("Process All", variant="primary")
-                    batch_status = gr.Textbox(
-                        label="Status", interactive=False
-                    )
+                    batch_status = gr.Textbox(label="Status", interactive=False)
 
             batch_gallery = gr.Gallery(
                 label="Results",
@@ -324,9 +317,7 @@ with gr.Blocks(theme=theme, title="Bake") as demo:
                 object_fit="contain",
                 height="auto",
             )
-            batch_download = gr.File(
-                label="Download All (ZIP)", interactive=False
-            )
+            batch_download = gr.File(label="Download All (ZIP)", interactive=False)
 
             batch_btn.click(
                 fn=process_batch,
