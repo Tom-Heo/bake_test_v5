@@ -177,11 +177,7 @@ def inference(args):
             # C. Inference
             with torch.no_grad():
                 input_oklabp = to_oklabp(input_padded)
-                x = model(input_oklabp)
-                x = model(x)
-                x = model(x)
-                x = model(x)
-                output_oklabp = model(x)
+                output_oklabp = model(input_oklabp)
                 output_rgb = to_rgb(output_oklabp)
 
             # D. Unpad
