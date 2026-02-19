@@ -83,5 +83,5 @@ class BakeNet(nn.Module):
             # 4. Residual Connection
             feat = self.residual_gates[i](nemo_out, gated_input)
 
-        # D. Head & Global Residual
-        return x + 0.2 * self.head(feat)
+        # D. Head
+        return self.head(feat)
