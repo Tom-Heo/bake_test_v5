@@ -34,7 +34,7 @@ class Config:
     TOTAL_EPOCHS = 10000  # 총 학습 에폭
 
     # Optimizer (AdamW) - v3의 안정적인 설정 유지
-    LEARNING_RATE = 1e-4
+    LEARNING_RATE = 5e-4
     WEIGHT_DECAY = 1e-6  # 디테일 보존을 위해 약한 규제 적용
 
     # Scheduler (ExponentialLR)
