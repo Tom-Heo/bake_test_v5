@@ -66,7 +66,7 @@ def train(args):
     )
 
     # Scheduler Setup
-    warmup_epochs = 10
+    warmup_epochs = 50
     total_warmup_iters = warmup_epochs * len(train_loader)
 
     scheduler_warmup = LinearLR(
