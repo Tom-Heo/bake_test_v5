@@ -34,7 +34,7 @@ class BakeNet(nn.Module):
 
         # C. NeMO Blocks (50개)
         # 국소적 디테일 복원
-        self.nemo_modules = nn.ModuleList([Heo.NeMO33(dim) for _ in range(depth)])
+        self.nemo_modules = nn.ModuleList([Heo.NeMO99(dim) for _ in range(depth)])
 
         # D. Residual Gates (50개)
         # 연산 전후의 차이를 학습 (Gradient Flow 보장)
