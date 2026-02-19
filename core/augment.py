@@ -58,7 +58,7 @@ class BakeAugment(nn.Module):
         strengths = [0.25, 0.15, 0.15]  # Lp / ap / bp
         for ch in range(3):
             ctrl_x, ctrl_y = self._make_random_curve(
-                n_ctrl=5, strength=strengths[ch], device=oklabp.device
+                n_ctrl=399, strength=strengths[ch], device=oklabp.device
             )
             oklabp[:, ch] = self._apply_curve(oklabp[:, ch], ctrl_x, ctrl_y)
         return oklabp
