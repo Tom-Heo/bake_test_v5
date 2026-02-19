@@ -55,7 +55,7 @@ class BakeAugment(nn.Module):
         Random Per-Channel Curve Distortion in OklabP Space.
         Input / Output: (B, 3, H, W) OklabP [-1, 1]
         """
-        strengths = [1.0, 1.0, 1.0]  # Lp / ap / bp
+        strengths = [0.5, 0.3, 0.3]  # Lp / ap / bp
         for ch in range(3):
             ctrl_x, ctrl_y = self._make_random_curve(
                 n_ctrl=399, strength=strengths[ch], device=oklabp.device
