@@ -328,4 +328,14 @@ with gr.Blocks(title="Bake") as demo:
 # [6] Launch
 # =============================================================================
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", share=True, theme=theme)
+    port = 7860
+
+    try:
+        from pyngrok import ngrok
+
+        public_url = ngrok.connect(port)
+        print(f"[Bake] Public URL: {public_url}")
+    except Exception as e:
+        print(f"[Bake] ngrok unavailable ({e}), local only")
+
+    demo.launch(server_name="0.0.0.0", server_port=port, share=False, theme=theme)
