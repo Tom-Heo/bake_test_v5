@@ -240,7 +240,7 @@ theme = gr.themes.Base(
 # =============================================================================
 # [5] UI
 # =============================================================================
-with gr.Blocks(theme=theme, title="Bake") as demo:
+with gr.Blocks(title="Bake") as demo:
 
     gr.Markdown("# Bake\n*Accurate, therefore beautiful.*")
 
@@ -328,4 +328,4 @@ with gr.Blocks(theme=theme, title="Bake") as demo:
 # [6] Launch
 # =============================================================================
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", share=True)
+    demo.launch(server_name="0.0.0.0", share=True, theme=theme)
