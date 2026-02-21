@@ -23,16 +23,23 @@ class BakeAugment(nn.Module):
     def _make_random_curve(self, n_ctrl=399, strength=0.10, device="cpu"):
         """
         Random Monotonic Piecewise-Linear Curve [-1, 1] -> [-1, 1].
+        Brownian motion + Z-score standardization + exp() for structural monotonicity.
         Returns (ctrl_x, ctrl_y) each of shape (n_ctrl + 2,).
-        Endpoints are fixed at (-1, -1) and (1, 1).
         """
         ctrl_x = torch.linspace(-1.0, 1.0, n_ctrl + 2, device=device)
-        ctrl_y = ctrl_x.clone()
-        ctrl_y[1:-1] += torch.randn(n_ctrl, device=device) * strength
-        ctrl_y, _ = torch.sort(ctrl_y)
-        ctrl_y = ctrl_y.clamp(-1.0, 1.0)
-        ctrl_y[0] = -1.0
-        ctrl_y[-1] = 1.0
+
+        noise = torch.randn(n_ctrl + 1, device=device)
+        brownian = torch.cumsum(noise, dim=0)
+
+        brownian = brownian - brownian.mean()
+        brownian = (brownian / (brownian.std() + 1e-8)) * strength
+
+        steps = torch.exp(brownian)
+
+        y_inner = torch.cumsum(steps, dim=0)
+        y_full = torch.cat([torch.zeros(1, device=device), y_inner])
+        ctrl_y = (y_full / y_full[-1]) * 2.0 - 1.0
+
         return ctrl_x, ctrl_y
 
     def _apply_curve(self, values, ctrl_x, ctrl_y):
@@ -55,7 +62,7 @@ class BakeAugment(nn.Module):
         Random Per-Channel Curve Distortion in OklabP Space.
         Input / Output: (B, 3, H, W) OklabP [-1, 1]
         """
-        strengths = [0.5, 0.3, 0.3]  # Lp / ap / bp
+        strengths = [0.40, 0.20, 0.20]  # Lp / ap / bp
         for ch in range(3):
             ctrl_x, ctrl_y = self._make_random_curve(
                 n_ctrl=399, strength=strengths[ch], device=oklabp.device
