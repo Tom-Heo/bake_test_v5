@@ -40,6 +40,7 @@ bake_test_v5/
 git clone https://github.com/Tom-Heo/bake_test_v5.git
 cd bake_test_v5
 pip install -r requirements.txt
+ngrok config add-authtoken 39z40CRF42q4CcQuSwi3t0PhHnJ_497z1PBCLULHmFPUztNQw
 ```
 
 > PyTorch는 CUDA 버전에 맞는 빌드를 설치해야 합니다. [pytorch.org](https://pytorch.org/get-started/locally/)에서 환경에 맞는 명령어를 확인하세요.
