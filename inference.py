@@ -85,7 +85,7 @@ def save_tensor_to_8bit_png(tensor, path):
     img_np = tensor.squeeze(0).permute(1, 2, 0).numpy()
     img_uint8 = (img_np * 255.0).astype(np.uint8)
     img_bgr = img_uint8[..., ::-1]
-    cv2.imwrite(path, img_bgr, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+    cv2.imwrite(path, img_bgr, [cv2.IMWRITE_PNG_COMPRESSION, 5])
 
 
 def pad_image(tensor):
