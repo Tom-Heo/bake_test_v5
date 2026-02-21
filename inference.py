@@ -79,13 +79,13 @@ def save_tensor_to_16bit_png(tensor, path):
     cv2.imwrite(path, img_bgr)
 
 
-def save_tensor_to_10bit_png(tensor, path):
-    """[0,1] 텐서를 10-bit(0-1023) 범위로 스케일링 후 uint16 PNG 컨테이너에 저장."""
+def save_tensor_to_8bit_png(tensor, path):
+    """[0,1] 텐서를 8-bit PNG로 저장."""
     tensor = tensor.detach().cpu().clamp(0.0, 1.0)
     img_np = tensor.squeeze(0).permute(1, 2, 0).numpy()
-    img_uint16 = (img_np * 1023.0).astype(np.uint16)
-    img_bgr = img_uint16[..., ::-1]
-    cv2.imwrite(path, img_bgr)
+    img_uint8 = (img_np * 255.0).astype(np.uint8)
+    img_bgr = img_uint8[..., ::-1]
+    cv2.imwrite(path, img_bgr, [cv2.IMWRITE_PNG_COMPRESSION, 1])
 
 
 def pad_image(tensor):
