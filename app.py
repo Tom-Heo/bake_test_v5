@@ -16,7 +16,7 @@ from inference import (
     auto_detect_bit_depth,
     pad_image,
     unpad_image,
-    save_tensor_to_16bit_png,
+    save_tensor_to_10bit_png,
 )
 
 
@@ -164,11 +164,11 @@ def process_single(image_path: str | None, bit_depth: str):
     before = _to_display(input_tensor)
     after = _to_display(output_tensor)
 
-    # 16-bit PNG 다운로드 파일 생성
-    tmp = tempfile.NamedTemporaryFile(suffix="_bake_16bit.png", delete=False)
+    # 10-bit PNG 다운로드 파일 생성
+    tmp = tempfile.NamedTemporaryFile(suffix="_bake_10bit.png", delete=False)
     tmp_path = tmp.name
     tmp.close()
-    save_tensor_to_16bit_png(output_tensor, tmp_path)
+    save_tensor_to_10bit_png(output_tensor, tmp_path)
 
     return before, after, tmp_path, f"Done. ({msg})"
 
@@ -199,7 +199,7 @@ def process_batch(
             tensor, _ = _normalize(img_np, bit_depth)
             result = _infer(tensor, model, to_oklabp, to_rgb, device)
 
-            save_tensor_to_16bit_png(result, os.path.join(tmp_dir, f"{name}_bake.png"))
+            save_tensor_to_10bit_png(result, os.path.join(tmp_dir, f"{name}_bake.png"))
             gallery.append((_to_display(result), name))
             processed += 1
         except Exception as e:
@@ -268,7 +268,7 @@ with gr.Blocks(title="Bake") as demo:
                 single_before = gr.Image(label="Before", interactive=False)
                 single_after = gr.Image(label="After", interactive=False)
 
-            single_download = gr.File(label="16-bit PNG Download", interactive=False)
+            single_download = gr.File(label="10-bit PNG Download", interactive=False)
 
             single_btn.click(
                 fn=process_single,
