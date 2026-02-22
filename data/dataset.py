@@ -48,11 +48,11 @@ class BakeDataset(Dataset):
         else:
             return 2
 
-    def _get_random_crop(self, img: Image.Image, size=512) -> Image.Image:
+    def _get_random_crop(self, img: Image.Image, size=256) -> Image.Image:
         """
         [CPU-Side Crop]
         DataLoader가 배치를 구성하려면 모든 텐서의 크기가 같아야 하므로,
-        여기서 1차적으로 512x512 크기로 잘라서 보냅니다.
+        여기서 1차적으로 256x256 크기로 잘라서 보냅니다.
         """
         w, h = img.size
 
@@ -80,5 +80,5 @@ class BakeDataset(Dataset):
 
         # Random Crop -> Tensor
         # (복잡한 열화 및 증강은 GPU의 augment.py에서 수행)
-        img_crop = self._get_random_crop(img, size=512)
+        img_crop = self._get_random_crop(img, size=256)
         return TF.to_tensor(img_crop)

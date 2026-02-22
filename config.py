@@ -19,9 +19,9 @@ class Config:
     # [Data Settings]
     # -------------------------------------------------------------------------
     # v5 모델의 Body 연산량과 96ch Loss 메모리 부하를 고려하여 안정적인 1로 설정
-    BATCH_SIZE = 1
+    BATCH_SIZE = 8
     ACCUM_STEPS = (
-        4  # Gradient Accumulation: effective batch size = BATCH_SIZE * ACCUM_STEPS
+        1  # Gradient Accumulation: effective batch size = BATCH_SIZE * ACCUM_STEPS
     )
     NUM_WORKERS = 4  # 데이터 로더 워커 수
 
