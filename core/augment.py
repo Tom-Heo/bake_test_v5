@@ -1,6 +1,7 @@
+import random
 import torch
 import torch.nn as nn
-import random
+import torch.nn.functional as F
 
 from .palette import Palette
 
@@ -8,89 +9,286 @@ from .palette import Palette
 class BakeAugment(nn.Module):
     """
     [Bake GPU Darkroom]
-    GPU-Accelerated Degradation Pipeline
+    AI 색상 복원 모델 학습을 위한 GPU 가속 기반 사진 열화(Degradation) 파이프라인.
+
+    인위적인 픽셀 파괴(White Noise, Blur)를 배제하고, 실제 카메라 센서의 한계와
+    잘못된 보정(Curve, HSL, Color Wheels)에서 발생하는 '위상학적으로 연속적인 색상 왜곡'을 생성합니다.
+    특히, 열화의 기준점(Condition)을 항상 '원본 이미지(Target)'에 두어,
+    AI가 피사체의 구조(Structure)를 단서로 삼아 명확한 역함수를 학습할 수 있도록 설계되었습니다.
     """
 
-    def __init__(self):
+    def __init__(self, hsl_grid_size=33):
         super().__init__()
-
-        # Color Space Converter (sRGB -> OklabP)
+        # 시각적으로 균일한(Perceptually Uniform) OklabP 공간을 활용하여
+        # 인간의 인지와 수학적 연산의 궤를 완벽히 일치시킵니다. (값 범위: [-1, 1])
         self.to_oklabp = Palette.sRGBtoOklabP()
+        self.G = hsl_grid_size
 
-    # -----------------------------------------------------------------
-    # OklabP Random Curve Degradation
-    # -----------------------------------------------------------------
-    def _make_random_curve(self, n_ctrl=399, strength=0.10, device="cpu"):
+    # =================================================================
+    # 1. 1D Curve Generators & Application (Global Tone & Color)
+    # =================================================================
+    def _make_random_curve(
+        self, B, n_ctrl=399, strength=1.00, device="cpu", dtype=torch.float32
+    ):
         """
-        Random Monotonic Piecewise-Linear Curve [-1, 1] -> [-1, 1].
-        Brownian motion + Z-score standardization + exp() for structural monotonicity.
-        Returns (ctrl_x, ctrl_y) each of shape (n_ctrl + 2,).
+        [글로벌 톤 커브 (Global Tone Curve)]
+        단조 증가(Monotonic)를 보장하는 매끄러운 S자/역S자 곡선을 생성합니다.
+        블랙이 뜨거나(Lifted Blacks) 화이트가 날아가는(Clipped Highlights)
+        다이나믹 레인지의 현실적인 손실을 무작위로 모사합니다.
         """
-        ctrl_x = torch.linspace(-1.0, 1.0, n_ctrl + 2, device=device)
+        ctrl_x = (
+            torch.linspace(-1.0, 1.0, n_ctrl + 2, device=device, dtype=dtype)
+            .unsqueeze(0)
+            .expand(B, -1)
+        )
 
-        noise = torch.randn(n_ctrl + 1, device=device)
-        brownian = torch.cumsum(noise, dim=0)
-
-        brownian = brownian - brownian.mean()
-        brownian = (brownian / (brownian.std() + 1e-8)) * strength
+        # 브라운 운동을 통한 매끄러운 파동 생성 및 지수 함수(exp)를 통한 단조 증가 강제
+        noise = torch.randn(B, n_ctrl + 1, device=device, dtype=dtype)
+        brownian = torch.cumsum(noise, dim=1)
+        brownian = brownian - brownian.mean(dim=1, keepdim=True)
+        brownian = (brownian / (brownian.std(dim=1, keepdim=True) + 1e-8)) * strength
 
         steps = torch.exp(brownian)
+        y_inner = torch.cumsum(steps, dim=1)
+        y_full = torch.cat(
+            [torch.zeros(B, 1, device=device, dtype=dtype), y_inner], dim=1
+        )
 
-        y_inner = torch.cumsum(steps, dim=0)
-        y_full = torch.cat([torch.zeros(1, device=device), y_inner])
-        ctrl_y = (y_full / y_full[-1]) * 2.0 - 1.0
+        y_max = y_full[:, -1:]
+
+        # [다이나믹 레인지 손실 모사]
+        # 곡선의 양 끝점에 최대 5%(0.05)의 오프셋을 주어 텍스처 파괴 없는 자연스러운 노출 불량 유도
+        black_offset = torch.rand(B, 1, device=device, dtype=dtype) * 0.05
+        white_offset = torch.rand(B, 1, device=device, dtype=dtype) * 0.05
+
+        scale = 2.0 - (black_offset + white_offset)
+        ctrl_y = (y_full / y_max) * scale - 1.0 + black_offset
+
+        return ctrl_x, ctrl_y
+
+    def _make_random_walk(
+        self, B, n_ctrl=33, strength=1.00, device="cpu", dtype=torch.float32
+    ):
+        """
+        [스플릿 토닝 커브 (Color Wheels Curve)]
+        특정 명도 구간에 독립적인 색을 덧입히기 위한 자유 파동(Non-monotonic) 곡선을 생성합니다.
+        배치 내 이미지마다 각기 다른 한계 진폭을 갖도록 설계하여 열화 강도의 다양성을 극대화합니다.
+        """
+        ctrl_x = (
+            torch.linspace(-1.0, 1.0, n_ctrl + 2, device=device, dtype=dtype)
+            .unsqueeze(0)
+            .expand(B, -1)
+        )
+
+        noise = torch.randn(B, n_ctrl + 2, device=device, dtype=dtype)
+        walk = torch.cumsum(noise, dim=1)
+        walk = walk - walk.mean(dim=1, keepdim=True)
+
+        # [동적 진폭 제어]
+        # 최대 진폭을 0.0 ~ strength 사이의 무작위 값으로 설정하여 다채로운 오염 강도 부여
+        dynamic_strength = torch.rand(B, 1, device=device, dtype=dtype) * strength
+        max_val = walk.abs().max(dim=1, keepdim=True)[0] + 1e-8
+        ctrl_y = (walk / max_val) * dynamic_strength
 
         return ctrl_x, ctrl_y
 
     def _apply_curve(self, values, ctrl_x, ctrl_y):
         """
-        Apply piecewise-linear curve via searchsorted + lerp.
-        values: arbitrary shape tensor
-        ctrl_x, ctrl_y: (K,) sorted control points
+        [GPU 최적화 1D 보간]
+        탐색 알고리즘(searchsorted) 없이 균등 간격의 수학적 특성을 활용해
+        O(1) 메모리 인덱싱만으로 곡선을 텐서에 맵핑합니다.
         """
-        shape = values.shape
-        flat = values.reshape(-1).clamp(ctrl_x[0], ctrl_x[-1])
-        idx = torch.searchsorted(ctrl_x, flat, right=True) - 1
-        idx = idx.clamp(0, len(ctrl_x) - 2)
-        x0, x1 = ctrl_x[idx], ctrl_x[idx + 1]
-        y0, y1 = ctrl_y[idx], ctrl_y[idx + 1]
-        t = (flat - x0) / (x1 - x0 + 1e-8)
-        return (y0 + t * (y1 - y0)).reshape(shape)
+        B, H, W = values.shape
+        flat = values.view(B, -1)
+        K = ctrl_x.shape[1]
 
-    def apply_oklabp_curve(self, oklabp):
+        flat = flat.clamp(-1.0, 1.0)
+
+        idx_float = ((flat + 1.0) / 2.0) * (K - 1)
+        idx = idx_float.long().clamp(0, K - 2)
+
+        x0 = torch.gather(ctrl_x, 1, idx)
+        x1 = torch.gather(ctrl_x, 1, idx + 1)
+        y0 = torch.gather(ctrl_y, 1, idx)
+        y1 = torch.gather(ctrl_y, 1, idx + 1)
+
+        t = (flat - x0) / (x1 - x0 + 1e-8)
+        out = y0 + t * (y1 - y0)
+
+        return out.view(B, H, W)
+
+    # =================================================================
+    # 2. HSL 2D Grid Operations (Local Color Distortion)
+    # =================================================================
+    def _make_hsl_grid(self, B, strength, ctrl_res, device, dtype):
         """
-        Random Per-Channel Curve Distortion in OklabP Space.
-        Input / Output: (B, 3, H, W) OklabP [-1, 1]
+        [HSL 국소 색상 왜곡 벡터 필드]
+        극소수의 제어점에서 생성된 노이즈를 방사형(채도) 및 접선형(색조) 벡터로 변환하여,
+        특정 색상의 영역만 위상학적으로 부드럽게 뒤틀어버리는 2D 그리드를 완성합니다.
         """
-        strengths = [1.00, 1.00, 1.00]  # Lp / ap / bp
-        for ch in range(3):
-            ctrl_x, ctrl_y = self._make_random_curve(
-                n_ctrl=399, strength=strengths[ch], device=oklabp.device
-            )
-            oklabp[:, ch] = self._apply_curve(oklabp[:, ch], ctrl_x, ctrl_y)
-        return oklabp
+        W_sat_low = (
+            torch.randn(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
+        )
+        W_hue_low = (
+            torch.randn(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
+        )
+        W_lum_low = torch.randn(
+            B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype
+        ) * (strength * 0.5)
+
+        W_sat = F.interpolate(
+            W_sat_low, size=(self.G, self.G), mode="bicubic", align_corners=True
+        ).squeeze(1)
+        W_hue = F.interpolate(
+            W_hue_low, size=(self.G, self.G), mode="bicubic", align_corners=True
+        ).squeeze(1)
+        W_lum = F.interpolate(
+            W_lum_low, size=(self.G, self.G), mode="bicubic", align_corners=True
+        ).squeeze(1)
+
+        a_coords = torch.linspace(-1.0, 1.0, self.G, device=device, dtype=dtype)
+        b_coords = torch.linspace(-1.0, 1.0, self.G, device=device, dtype=dtype)
+
+        grid_a, grid_b = torch.meshgrid(a_coords, b_coords, indexing="xy")
+        grid_a = grid_a.unsqueeze(0).expand(B, -1, -1)
+        grid_b = grid_b.unsqueeze(0).expand(B, -1, -1)
+
+        R_a, R_b = grid_a, grid_b
+        T_a, T_b = -grid_b, grid_a
+
+        delta_L = W_lum
+        delta_a = (W_sat * R_a) + (W_hue * T_a)
+        delta_b = (W_sat * R_b) + (W_hue * T_b)
+
+        return torch.stack([delta_L, delta_a, delta_b], dim=1)
+
+    def apply_hsl(self, input_t, target_t, strength=0.2):
+        """
+        [원본 조건부 HSL 적용]
+        원본(Target)의 깨끗한 색상 좌표를 기준으로 오프셋(Delta)을 샘플링한 뒤,
+        그 변화량만 망가진 이미지(Input)에 누적합니다.
+        색상 덩어리(Frequency) 크기를 3, 4, 5 중 무작위로 결정하여 컬러 밴딩 방지와 패턴 다양성을 확보합니다.
+        """
+        B = input_t.shape[0]
+        device, dtype = input_t.device, input_t.dtype
+
+        # 색공간을 쪼개는 주파수 동적 할당 (3: 광범위한 변형, 5: 국소적인 변형)
+        ctrl_res = random.randint(3, 5)
+
+        offset_grid = self._make_hsl_grid(B, strength, ctrl_res, device, dtype)
+
+        # 오프셋 샘플링의 기준점은 항상 '원본(Target)'의 a, b 좌표를 활용합니다.
+        ab_coords_tgt = target_t[:, 1:3, :, :].permute(0, 2, 3, 1)
+
+        delta_lab = F.grid_sample(
+            offset_grid,
+            ab_coords_tgt,
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=True,
+        )
+
+        # 원본 구조 기반으로 계산된 델타를 망가진 이미지에 덧입힙니다 (Out-of-place)
+        return (input_t + delta_lab).clamp(-1.0, 1.0)
+
+    # =================================================================
+    # 3. Global Color Wheels Operation (Split Toning)
+    # =================================================================
+    def apply_color_wheels(self, input_t, target_t, strength=0.15):
+        """
+        [원본 조건부 스플릿 토닝]
+        원본 이미지의 명도(L) 대역을 평가하여 어두운 곳과 밝은 곳에 서로 다른 색 틴트를 씌웁니다.
+        이미 뭉개진 명도가 아닌 '원본의 명도'를 기준으로 삼으므로, AI가 피사체의 윤곽을 복원 단서로 삼을 수 있습니다.
+        """
+        B = input_t.shape[0]
+        device, dtype = input_t.device, input_t.dtype
+
+        L_tgt = target_t[:, 0, :, :]
+        L_in, a_in, b_in = torch.unbind(input_t, dim=1)
+
+        # 원본 L값을 기준으로 a채널(Green-Red) 틴트 변화량 계산
+        ctrl_L_a, ctrl_offset_a = self._make_random_walk(
+            B, self.G, strength, device, dtype
+        )
+        delta_a = self._apply_curve(L_tgt, ctrl_L_a, ctrl_offset_a)
+
+        # 원본 L값을 기준으로 b채널(Blue-Yellow) 틴트 변화량 계산
+        ctrl_L_b, ctrl_offset_b = self._make_random_walk(
+            B, self.G, strength, device, dtype
+        )
+        delta_b = self._apply_curve(L_tgt, ctrl_L_b, ctrl_offset_b)
+
+        # 계산된 틴트 오프셋을 망가진 입력의 색상 채널에 누적
+        a_out = (a_in + delta_a).clamp(-1.0, 1.0)
+        b_out = (b_in + delta_b).clamp(-1.0, 1.0)
+
+        return torch.stack([L_in, a_out, b_out], dim=1)
+
+    # =================================================================
+    # 4. Pipeline Execution
+    # =================================================================
+    def apply_oklabp_curve(self, input_t, target_t):
+        """
+        [원본 조건부 베이스 커브 적용]
+        전체적인 대비와 전역 색온도 왜곡을 수행합니다.
+        원본을 곡선에 통과시켜 이상적인 변화량(Delta)을 구한 뒤 적용하여,
+        과도한 정보 소실로 인한 AI의 블러(Blur) 생성을 원천 차단합니다.
+        """
+        B = input_t.shape[0]
+        device, dtype = input_t.device, input_t.dtype
+
+        L_tgt, a_tgt, b_tgt = torch.unbind(target_t, dim=1)
+        L_in, a_in, b_in = torch.unbind(input_t, dim=1)
+
+        # 1. 명도(L) 대비 왜곡
+        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 1.00, device, dtype)
+        delta_L = self._apply_curve(L_tgt, ctrl_x_L, ctrl_y_L) - L_tgt
+        L_out = (L_in + delta_L).clamp(-1.0, 1.0)
+
+        # 2. a채널(Green-Red) 균형 왜곡
+        ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 1.00, device, dtype)
+        delta_a = self._apply_curve(a_tgt, ctrl_x_a, ctrl_y_a) - a_tgt
+        a_out = (a_in + delta_a).clamp(-1.0, 1.0)
+
+        # 3. b채널(Blue-Yellow) 균형 왜곡
+        ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 1.00, device, dtype)
+        delta_b = self._apply_curve(b_tgt, ctrl_x_b, ctrl_y_b) - b_tgt
+        b_out = (b_in + delta_b).clamp(-1.0, 1.0)
+
+        return torch.stack([L_out, a_out, b_out], dim=1)
 
     def forward(self, x):
         """
-        Input:  (B, 3, H, W) sRGB [0, 1]
-        Returns: (Input_OklabP, Target_OklabP)  both [-1, 1]
+        [Bake Augmentation 순전파]
+        Input:  (B, 3, H, W) 포맷의 sRGB 텐서
+        Returns: 망가진 이미지(Input)와 원본 이미지(Target)의 OklabP [-1, 1] 쌍
         """
-        # --- [Geometric Augmentation] ---
-        # Flip & Rotate (GPU)
-        if random.random() < 0.5:
-            x = torch.flip(x, [3])  # H-Flip
-        if random.random() < 0.5:
-            x = torch.flip(x, [2])  # V-Flip
-        if random.random() < 0.5:
-            x = torch.rot90(x, 1, [2, 3])
+        B = x.shape[0]
+        device, dtype = x.device, x.dtype
 
-        # sRGB -> OklabP (single conversion, no round-trip)
+        # --- [기하학적 증강 (Geometric Augmentation)] ---
+        # CPU-GPU 동기화 지연을 방지하기 위해 Python 제어문을 배제하고
+        # 순수 GPU 텐서 마스킹(Tensor Masking) 방식의 병렬 플립(Flip) 연산을 수행합니다.
+        flip_h_mask = torch.rand(B, 1, 1, 1, device=device, dtype=dtype) < 0.5
+        x = torch.where(flip_h_mask, torch.flip(x, [3]), x)
+
+        flip_v_mask = torch.rand(B, 1, 1, 1, device=device, dtype=dtype) < 0.5
+        x = torch.where(flip_v_mask, torch.flip(x, [2]), x)
+
+        # --- [색공간 변환 (Color Space Conversion)] ---
         target = self.to_oklabp(x)
         input_t = target.clone()
 
-        # --- [Degradation Pipeline] ---
+        # --- [순차적 열화 파이프라인 (Degradation Pipeline)] ---
+        # 형태 보존을 위해 모든 왜곡의 기준(Condition)은 원본(target)으로 설정합니다.
 
-        # OklabP Curve Distortion (Input-only)
-        input_t = self.apply_oklabp_curve(input_t)
+        # 1. Base Tone & Color: 전역 대비 및 화이트밸런스 붕괴
+        input_t = self.apply_oklabp_curve(input_t, target)
+
+        # 2. Local HSL: 특정 색 영역의 채도/색조 비틀기
+        input_t = self.apply_hsl(input_t, target, strength=0.25)
+
+        # 3. Global Color Wheels: 명암 대역별 교차 오염 유도
+        input_t = self.apply_color_wheels(input_t, target, strength=0.15)
 
         return input_t, target
