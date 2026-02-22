@@ -280,8 +280,8 @@ class BakeAugment(nn.Module):
         # --- [순차적 열화 파이프라인 (Degradation Pipeline)] ---
         degradations = [
             lambda inp: self.apply_oklabp_curve(inp, target),
-            lambda inp: self.apply_hsl(inp, target, strength=0.50),
-            lambda inp: self.apply_color_wheels(inp, target, strength=0.25),
+            lambda inp: self.apply_hsl(inp, target, strength=0.25),
+            lambda inp: self.apply_color_wheels(inp, target, strength=0.50),
         ]
 
         random.shuffle(degradations)
