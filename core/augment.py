@@ -28,7 +28,7 @@ class BakeAugment(nn.Module):
     # 1. 1D Curve Generators & Application (Global Tone & Color)
     # =================================================================
     def _make_random_curve(
-        self, B, n_ctrl=399, strength=1.00, device="cpu", dtype=torch.float32
+        self, B, n_ctrl=399, strength=0.10, device="cpu", dtype=torch.float32
     ):
         """
         [글로벌 톤 커브 (Global Tone Curve) - 동적 진폭 제어 적용]
@@ -80,7 +80,7 @@ class BakeAugment(nn.Module):
         return ctrl_x, ctrl_y
 
     def _make_random_walk(
-        self, B, n_ctrl=33, strength=1.00, device="cpu", dtype=torch.float32
+        self, B, n_ctrl=33, strength=0.10, device="cpu", dtype=torch.float32
     ):
         """
         [스플릿 토닝 커브 (Color Wheels Curve)]
@@ -252,17 +252,17 @@ class BakeAugment(nn.Module):
         L_in, a_in, b_in = torch.unbind(input_t, dim=1)
 
         # 1. 명도(L) 대비 왜곡
-        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 1.00, device, dtype)
+        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 0.10, device, dtype)
         delta_L = self._apply_curve(L_tgt, ctrl_x_L, ctrl_y_L) - L_tgt
         L_out = L_in + delta_L
 
         # 2. a채널(Green-Red) 균형 왜곡
-        ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 1.00, device, dtype)
+        ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 0.10, device, dtype)
         delta_a = self._apply_curve(a_tgt, ctrl_x_a, ctrl_y_a) - a_tgt
         a_out = a_in + delta_a
 
         # 3. b채널(Blue-Yellow) 균형 왜곡
-        ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 1.00, device, dtype)
+        ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 0.10, device, dtype)
         delta_b = self._apply_curve(b_tgt, ctrl_x_b, ctrl_y_b) - b_tgt
         b_out = b_in + delta_b
 
@@ -293,8 +293,8 @@ class BakeAugment(nn.Module):
         # --- [순차적 열화 파이프라인 (Degradation Pipeline)] ---
         degradations = [
             lambda inp: self.apply_oklabp_curve(inp, target),
-            lambda inp: self.apply_hsl(inp, target, strength=1.00),
-            lambda inp: self.apply_color_wheels(inp, target, strength=1.00),
+            lambda inp: self.apply_hsl(inp, target, strength=0.10),
+            lambda inp: self.apply_color_wheels(inp, target, strength=0.10),
         ]
 
         random.shuffle(degradations)
