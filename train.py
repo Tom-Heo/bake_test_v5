@@ -66,7 +66,7 @@ def train(args):
     )
 
     # Scheduler Setup
-    warmup_epochs = 160
+    warmup_epochs = 100
     steps_per_epoch = len(train_loader) // Config.ACCUM_STEPS
     total_warmup_iters = warmup_epochs * steps_per_epoch
 
