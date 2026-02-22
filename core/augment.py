@@ -160,7 +160,7 @@ class BakeAugment(nn.Module):
 
         return torch.stack([delta_L, delta_a, delta_b], dim=1)
 
-    def apply_hsl(self, input_t, target_t, strength=0.2):
+    def apply_hsl(self, input_t, target_t, strength=1.00):
         """
         [원본 조건부 HSL 적용]
         원본(Target)의 깨끗한 색상 좌표를 기준으로 오프셋(Delta)을 샘플링한 뒤,
@@ -192,7 +192,7 @@ class BakeAugment(nn.Module):
     # =================================================================
     # 3. Global Color Wheels Operation (Split Toning)
     # =================================================================
-    def apply_color_wheels(self, input_t, target_t, strength=0.15):
+    def apply_color_wheels(self, input_t, target_t, strength=1.00):
         """
         [원본 조건부 스플릿 토닝]
         원본 이미지의 명도(L) 대역을 평가하여 어두운 곳과 밝은 곳에 서로 다른 색 틴트를 씌웁니다.
@@ -239,17 +239,17 @@ class BakeAugment(nn.Module):
         L_in, a_in, b_in = torch.unbind(input_t, dim=1)
 
         # 1. 명도(L) 대비 왜곡
-        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 1.00, device, dtype)
+        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 0.50, device, dtype)
         delta_L = self._apply_curve(L_tgt, ctrl_x_L, ctrl_y_L) - L_tgt
         L_out = L_in + delta_L
 
         # 2. a채널(Green-Red) 균형 왜곡
-        ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 1.00, device, dtype)
+        ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 0.50, device, dtype)
         delta_a = self._apply_curve(a_tgt, ctrl_x_a, ctrl_y_a) - a_tgt
         a_out = a_in + delta_a
 
         # 3. b채널(Blue-Yellow) 균형 왜곡
-        ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 1.00, device, dtype)
+        ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 0.50, device, dtype)
         delta_b = self._apply_curve(b_tgt, ctrl_x_b, ctrl_y_b) - b_tgt
         b_out = b_in + delta_b
 
@@ -281,7 +281,7 @@ class BakeAugment(nn.Module):
         degradations = [
             lambda inp: self.apply_oklabp_curve(inp, target),
             lambda inp: self.apply_hsl(inp, target, strength=0.25),
-            lambda inp: self.apply_color_wheels(inp, target, strength=0.50),
+            lambda inp: self.apply_color_wheels(inp, target, strength=1.00),
         ]
 
         random.shuffle(degradations)
