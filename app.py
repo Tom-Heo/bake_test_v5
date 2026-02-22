@@ -329,12 +329,5 @@ with gr.Blocks(title="Bake") as demo:
 if __name__ == "__main__":
     port = 7860
 
-    try:
-        from pyngrok import ngrok
-
-        public_url = ngrok.connect(port)
-        print(f"[Bake] Public URL: {public_url}")
-    except Exception as e:
-        print(f"[Bake] ngrok unavailable ({e}), local only")
-
+    # 터널링은 외부의 Bash가 담당하므로, 앱은 로컬 호스팅에만 집중합니다.
     demo.launch(server_name="0.0.0.0", server_port=port, share=False, theme=theme)
