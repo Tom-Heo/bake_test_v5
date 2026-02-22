@@ -102,8 +102,6 @@ class BakeAugment(nn.Module):
         flat = values.view(B, -1)
         K = ctrl_x.shape[1]
 
-        flat = flat.clamp(-1.0, 1.0)
-
         idx_float = ((flat + 1.0) / 2.0) * (K - 1)
         idx = idx_float.long().clamp(0, K - 2)
 
@@ -189,7 +187,7 @@ class BakeAugment(nn.Module):
         )
 
         # 원본 구조 기반으로 계산된 델타를 망가진 이미지에 덧입힙니다 (Out-of-place)
-        return (input_t + delta_lab).clamp(-1.0, 1.0)
+        return input_t + delta_lab
 
     # =================================================================
     # 3. Global Color Wheels Operation (Split Toning)
@@ -219,8 +217,8 @@ class BakeAugment(nn.Module):
         delta_b = self._apply_curve(L_tgt, ctrl_L_b, ctrl_offset_b)
 
         # 계산된 틴트 오프셋을 망가진 입력의 색상 채널에 누적
-        a_out = (a_in + delta_a).clamp(-1.0, 1.0)
-        b_out = (b_in + delta_b).clamp(-1.0, 1.0)
+        a_out = a_in + delta_a
+        b_out = b_in + delta_b
 
         return torch.stack([L_in, a_out, b_out], dim=1)
 
@@ -243,17 +241,17 @@ class BakeAugment(nn.Module):
         # 1. 명도(L) 대비 왜곡
         ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 1.00, device, dtype)
         delta_L = self._apply_curve(L_tgt, ctrl_x_L, ctrl_y_L) - L_tgt
-        L_out = (L_in + delta_L).clamp(-1.0, 1.0)
+        L_out = L_in + delta_L
 
         # 2. a채널(Green-Red) 균형 왜곡
         ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 1.00, device, dtype)
         delta_a = self._apply_curve(a_tgt, ctrl_x_a, ctrl_y_a) - a_tgt
-        a_out = (a_in + delta_a).clamp(-1.0, 1.0)
+        a_out = a_in + delta_a
 
         # 3. b채널(Blue-Yellow) 균형 왜곡
         ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 1.00, device, dtype)
         delta_b = self._apply_curve(b_tgt, ctrl_x_b, ctrl_y_b) - b_tgt
-        b_out = (b_in + delta_b).clamp(-1.0, 1.0)
+        b_out = b_in + delta_b
 
         return torch.stack([L_out, a_out, b_out], dim=1)
 
@@ -290,5 +288,7 @@ class BakeAugment(nn.Module):
 
         # 3. Global Color Wheels: 명암 대역별 교차 오염 유도
         input_t = self.apply_color_wheels(input_t, target, strength=0.15)
+
+        input_t = input_t.clamp(-1.0, 1.0)
 
         return input_t, target
