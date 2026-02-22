@@ -31,10 +31,10 @@ class BakeAugment(nn.Module):
         self, B, n_ctrl=399, strength=1.00, device="cpu", dtype=torch.float32
     ):
         """
-        [글로벌 톤 커브 (Global Tone Curve)]
+        [글로벌 톤 커브 (Global Tone Curve) - 동적 진폭 제어 적용]
         단조 증가(Monotonic)를 보장하는 매끄러운 S자/역S자 곡선을 생성합니다.
-        블랙이 뜨거나(Lifted Blacks) 화이트가 날아가는(Clipped Highlights)
-        다이나믹 레인지의 현실적인 손실을 무작위로 모사합니다.
+        배치 내 이미지마다 대각선(항등 함수)으로부터 이탈하는 강도를 무작위로 설정하여,
+        완벽히 깨끗한 상태부터 극단적으로 망가진 다이나믹 레인지까지 연속적인 스펙트럼을 모사합니다.
         """
         ctrl_x = (
             torch.linspace(-1.0, 1.0, n_ctrl + 2, device=device, dtype=dtype)
@@ -42,12 +42,19 @@ class BakeAugment(nn.Module):
             .expand(B, -1)
         )
 
-        # 브라운 운동을 통한 매끄러운 파동 생성 및 지수 함수(exp)를 통한 단조 증가 강제
+        # 브라운 운동을 통한 매끄러운 파동 생성 및 정규화
         noise = torch.randn(B, n_ctrl + 1, device=device, dtype=dtype)
         brownian = torch.cumsum(noise, dim=1)
         brownian = brownian - brownian.mean(dim=1, keepdim=True)
-        brownian = (brownian / (brownian.std(dim=1, keepdim=True) + 1e-8)) * strength
+        brownian = brownian / (brownian.std(dim=1, keepdim=True) + 1e-8)
 
+        # [동적 진폭 제어]
+        # 곡선의 휘어짐 정도를 결정합니다.
+        # dynamic_strength가 0이 되면 brownian은 모두 0이 되고, exp(0)=1이 되어 완벽한 직선을 그립니다.
+        dynamic_strength = torch.rand(B, 1, device=device, dtype=dtype) * strength
+        brownian = brownian * dynamic_strength
+
+        # 지수 함수를 통한 단조 증가 강제 및 누적
         steps = torch.exp(brownian)
         y_inner = torch.cumsum(steps, dim=1)
         y_full = torch.cat(
@@ -56,10 +63,16 @@ class BakeAugment(nn.Module):
 
         y_max = y_full[:, -1:]
 
-        # [다이나믹 레인지 손실 모사]
-        # 곡선의 양 끝점에 최대 5%(0.05)의 오프셋을 주어 텍스처 파괴 없는 자연스러운 노출 불량 유도
-        black_offset = torch.rand(B, 1, device=device, dtype=dtype) * 0.05
-        white_offset = torch.rand(B, 1, device=device, dtype=dtype) * 0.05
+        # [다이나믹 레인지 손실 동기화]
+        # 곡선이 선형(원형)에 가까울 때는 블랙/화이트 오프셋도 발생하지 않도록,
+        # 동적 진폭의 비율(Ratio)에 맞춰 오프셋의 한계치도 함께 축소시킵니다.
+        offset_ratio = dynamic_strength / (strength + 1e-8)
+        black_offset = (
+            torch.rand(B, 1, device=device, dtype=dtype) * 0.05 * offset_ratio
+        )
+        white_offset = (
+            torch.rand(B, 1, device=device, dtype=dtype) * 0.05 * offset_ratio
+        )
 
         scale = 2.0 - (black_offset + white_offset)
         ctrl_y = (y_full / y_max) * scale - 1.0 + black_offset
@@ -239,17 +252,17 @@ class BakeAugment(nn.Module):
         L_in, a_in, b_in = torch.unbind(input_t, dim=1)
 
         # 1. 명도(L) 대비 왜곡
-        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 0.50, device, dtype)
+        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 1.00, device, dtype)
         delta_L = self._apply_curve(L_tgt, ctrl_x_L, ctrl_y_L) - L_tgt
         L_out = L_in + delta_L
 
         # 2. a채널(Green-Red) 균형 왜곡
-        ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 0.50, device, dtype)
+        ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 1.00, device, dtype)
         delta_a = self._apply_curve(a_tgt, ctrl_x_a, ctrl_y_a) - a_tgt
         a_out = a_in + delta_a
 
         # 3. b채널(Blue-Yellow) 균형 왜곡
-        ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 0.50, device, dtype)
+        ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 1.00, device, dtype)
         delta_b = self._apply_curve(b_tgt, ctrl_x_b, ctrl_y_b) - b_tgt
         b_out = b_in + delta_b
 
@@ -280,7 +293,7 @@ class BakeAugment(nn.Module):
         # --- [순차적 열화 파이프라인 (Degradation Pipeline)] ---
         degradations = [
             lambda inp: self.apply_oklabp_curve(inp, target),
-            lambda inp: self.apply_hsl(inp, target, strength=0.25),
+            lambda inp: self.apply_hsl(inp, target, strength=1.00),
             lambda inp: self.apply_color_wheels(inp, target, strength=1.00),
         ]
 
