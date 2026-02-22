@@ -278,16 +278,16 @@ class BakeAugment(nn.Module):
         input_t = target.clone()
 
         # --- [순차적 열화 파이프라인 (Degradation Pipeline)] ---
-        # 형태 보존을 위해 모든 왜곡의 기준(Condition)은 원본(target)으로 설정합니다.
+        degradations = [
+            lambda inp: self.apply_oklabp_curve(inp, target),
+            lambda inp: self.apply_hsl(inp, target, strength=0.25),
+            lambda inp: self.apply_color_wheels(inp, target, strength=0.15),
+        ]
 
-        # 1. Base Tone & Color: 전역 대비 및 화이트밸런스 붕괴
-        input_t = self.apply_oklabp_curve(input_t, target)
+        random.shuffle(degradations)
 
-        # 2. Local HSL: 특정 색 영역의 채도/색조 비틀기
-        input_t = self.apply_hsl(input_t, target, strength=0.25)
-
-        # 3. Global Color Wheels: 명암 대역별 교차 오염 유도
-        input_t = self.apply_color_wheels(input_t, target, strength=0.15)
+        for apply_degradation in degradations:
+            input_t = apply_degradation(input_t)
 
         input_t = input_t.clamp(-1.0, 1.0)
 
