@@ -66,7 +66,7 @@ def train(args):
     )
 
     # Scheduler Setup
-    warmup_epochs = 50
+    warmup_epochs = 160
     steps_per_epoch = len(train_loader) // Config.ACCUM_STEPS
     total_warmup_iters = warmup_epochs * steps_per_epoch
 
@@ -157,8 +157,8 @@ def train(args):
             accum_loss += loss.item()
             accum_count += 1
 
-            is_accum_boundary = (step % accum_steps == 0)
-            is_last_step = (step == len(train_loader))
+            is_accum_boundary = step % accum_steps == 0
+            is_last_step = step == len(train_loader)
 
             if is_accum_boundary or is_last_step:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
