@@ -68,10 +68,10 @@ class BakeAugment(nn.Module):
         # 동적 진폭의 비율(Ratio)에 맞춰 오프셋의 한계치도 함께 축소시킵니다.
         offset_ratio = dynamic_strength / (strength + 1e-8)
         black_offset = (
-            torch.rand(B, 1, device=device, dtype=dtype) * 0.05 * offset_ratio
+            torch.rand(B, 1, device=device, dtype=dtype) * strength * 0.5 * offset_ratio
         )
         white_offset = (
-            torch.rand(B, 1, device=device, dtype=dtype) * 0.05 * offset_ratio
+            torch.rand(B, 1, device=device, dtype=dtype) * strength * 0.5 * offset_ratio
         )
 
         scale = 2.0 - (black_offset + white_offset)
@@ -99,7 +99,7 @@ class BakeAugment(nn.Module):
 
         # [동적 진폭 제어]
         # 최대 진폭을 0.0 ~ strength 사이의 무작위 값으로 설정하여 다채로운 오염 강도 부여
-        dynamic_strength = torch.rand(B, 1, device=device, dtype=dtype) * strength
+        dynamic_strength = torch.rand(B, 1, device=device, dtype=dtype) * strength * 0.5
         max_val = walk.abs().max(dim=1, keepdim=True)[0] + 1e-8
         ctrl_y = (walk / max_val) * dynamic_strength
 
@@ -139,15 +139,15 @@ class BakeAugment(nn.Module):
         직교 좌표계의 가산(+) 왜곡이 아닌 극좌표계의 스케일(Scale)과 회전(Rotation) 물리량을 정의합니다.
         """
         # 1. 극소수의 제어점(3x3 ~ 5x5)에서 색공간을 통째로 밀어낼 거시적인 파동의 씨앗을 생성합니다.
-        W_lum_low = torch.randn(
-            B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype
-        ) * (strength * 0.5)
+        W_lum_low = (
+            torch.rand(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
+        ) - (strength / 2.0)
         W_scale_low = (
-            torch.randn(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
-        )
+            torch.rand(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
+        ) - (strength / 2.0)
         W_hue_low = (
-            torch.randn(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
-        )
+            torch.rand(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
+        ) - (strength / 2.0)
 
         # 2. Bicubic 보간을 통해 매끄럽고 연속적인 2D 색상 변환 맵을 완성합니다.
         W_lum = F.interpolate(
@@ -222,7 +222,7 @@ class BakeAugment(nn.Module):
     # =================================================================
     # 3. Global Color Wheels Operation (Split Toning)
     # =================================================================
-    def apply_color_wheels(self, input_t, target_t, strength=1.00):
+    def apply_color_wheels(self, input_t, target_t, strength=0.10):
         """
         [원본 조건부 스플릿 토닝]
         원본 이미지의 명도(L) 대역을 평가하여 어두운 곳과 밝은 곳에 서로 다른 색 틴트를 씌웁니다.
@@ -272,7 +272,7 @@ class BakeAugment(nn.Module):
         # 통제 변수 strength를 곡선의 최대 진폭 한계치로 전달합니다.
         ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, strength, device, dtype)
         delta_L = self._apply_curve(L_tgt, ctrl_x_L, ctrl_y_L) - L_tgt
-        L_out = L_in + delta_L
+        L_out = L_in + delta_L * 2.0
 
         # 2. a, b 채널: 전역 화이트 밸런스 틀어짐 (Global Color Shift)
         # strength를 기준으로 평행 이동의 범위를 [-strength/2, +strength/2]로 동기화합니다.
