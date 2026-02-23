@@ -86,8 +86,8 @@ class Heo:
         def __init__(self, dim: int):
             super().__init__()
 
-            self.alpha = nn.Parameter(torch.full((dim,), 0.99))
-            self.beta = nn.Parameter(torch.full((dim,), -0.99))
+            self.alpha = nn.Parameter(torch.full((dim,), 1.3))
+            self.beta = nn.Parameter(torch.full((dim,), -1.3))
 
         def forward(self, x: torch.Tensor, raw: torch.Tensor):
             alpha = torch.tanh(sqrt(3.0) * self.alpha) + 1.0
@@ -100,8 +100,8 @@ class Heo:
             c = int(channels)
             self.channels = c
 
-            self.alpha = nn.Parameter(torch.full((c,), 0.99))
-            self.beta = nn.Parameter(torch.full((c,), -0.99))
+            self.alpha = nn.Parameter(torch.full((c,), 1.3))
+            self.beta = nn.Parameter(torch.full((c,), -1.3))
 
         def forward(self, x: torch.Tensor, raw: torch.Tensor):
             if x.dim() != 4 or x.size(1) != self.channels:
