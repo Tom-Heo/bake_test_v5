@@ -303,10 +303,10 @@ class Heo:
 
             charbonnier = torch.sqrt(diff**2 + self.epsilon_char**2)
 
-            sharp_loss = (torch.log(1 + 10.0 * charbonnier / self.epsilon)) / 10.0
+            sharp_loss = (torch.log(1 + 20.0 * charbonnier / self.epsilon)) / 20.0
 
-            l2_loss = (10.0 * diff) ** 2 / 10.0
+            l2_loss = (20.0 * diff) ** 2 / 20.0
 
-            loss = (torch.where(abs_diff <= 0.1, sharp_loss, l2_loss)) / 10.0
+            loss = (torch.where(abs_diff <= 0.05, sharp_loss, l2_loss)) / 20.0
 
             return loss.mean()
