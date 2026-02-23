@@ -129,78 +129,95 @@ class BakeAugment(nn.Module):
         return out.view(B, H, W)
 
     # =================================================================
-    # 2. HSL 2D Grid Operations (Local Color Distortion)
+    # 2. HSL 2D Grid Operations (Polar Coordinate Distortion)
     # =================================================================
     def _make_hsl_grid(self, B, strength, ctrl_res, device, dtype):
         """
-        [HSL 국소 색상 왜곡 벡터 필드]
-        극소수의 제어점에서 생성된 노이즈를 방사형(채도) 및 접선형(색조) 벡터로 변환하여,
-        특정 색상의 영역만 위상학적으로 부드럽게 뒤틀어버리는 2D 그리드를 완성합니다.
+        [극좌표계 색상 왜곡 맵 (Polar Color-Space LUT)]
+        2D 색공간(a, b 평면) 전체를 위상학적으로 부드럽게 뒤틀기 위한 제어 변수를 생성합니다.
+        무채색의 절대성을 보존하고 채도의 비율적 깊이를 유지하기 위해,
+        직교 좌표계의 가산(+) 왜곡이 아닌 극좌표계의 스케일(Scale)과 회전(Rotation) 물리량을 정의합니다.
         """
-        W_sat_low = (
+        # 1. 극소수의 제어점(3x3 ~ 5x5)에서 색공간을 통째로 밀어낼 거시적인 파동의 씨앗을 생성합니다.
+        W_lum_low = torch.randn(
+            B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype
+        ) * (strength * 0.5)
+        W_scale_low = (
             torch.randn(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
         )
         W_hue_low = (
             torch.randn(B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype) * strength
         )
-        W_lum_low = torch.randn(
-            B, 1, ctrl_res, ctrl_res, device=device, dtype=dtype
-        ) * (strength * 0.5)
 
-        W_sat = F.interpolate(
-            W_sat_low, size=(self.G, self.G), mode="bicubic", align_corners=True
+        # 2. Bicubic 보간을 통해 매끄럽고 연속적인 2D 색상 변환 맵을 완성합니다.
+        W_lum = F.interpolate(
+            W_lum_low, size=(self.G, self.G), mode="bicubic", align_corners=True
+        ).squeeze(1)
+        W_scale = F.interpolate(
+            W_scale_low, size=(self.G, self.G), mode="bicubic", align_corners=True
         ).squeeze(1)
         W_hue = F.interpolate(
             W_hue_low, size=(self.G, self.G), mode="bicubic", align_corners=True
         ).squeeze(1)
-        W_lum = F.interpolate(
-            W_lum_low, size=(self.G, self.G), mode="bicubic", align_corners=True
-        ).squeeze(1)
 
-        a_coords = torch.linspace(-1.0, 1.0, self.G, device=device, dtype=dtype)
-        b_coords = torch.linspace(-1.0, 1.0, self.G, device=device, dtype=dtype)
-
-        grid_a, grid_b = torch.meshgrid(a_coords, b_coords, indexing="xy")
-        grid_a = grid_a.unsqueeze(0).expand(B, -1, -1)
-        grid_b = grid_b.unsqueeze(0).expand(B, -1, -1)
-
-        R_a, R_b = grid_a, grid_b
-        T_a, T_b = -grid_b, grid_a
-
+        # 3. 물리적 불변성을 확보하기 위해 극좌표계의 척도로 변환합니다.
+        # 채도는 1.0을 기점으로 곱해지는 승수(Multiplier)로, 색조는 라디안(Radian) 단위의 회전각이 됩니다.
         delta_L = W_lum
-        delta_a = (W_sat * R_a) + (W_hue * T_a)
-        delta_b = (W_sat * R_b) + (W_hue * T_b)
+        scale_C = 1.0 + W_scale
+        rot_h = W_hue * torch.pi
 
-        return torch.stack([delta_L, delta_a, delta_b], dim=1)
+        return torch.stack([delta_L, scale_C, rot_h], dim=1)
 
-    def apply_hsl(self, input_t, target_t, strength=1.00):
+    def apply_hsl(self, input_t, target_t, strength=0.10):
         """
-        [원본 조건부 HSL 적용]
-        원본(Target)의 깨끗한 색상 좌표를 기준으로 오프셋(Delta)을 샘플링한 뒤,
-        그 변화량만 망가진 이미지(Input)에 누적합니다.
-        색상 덩어리(Frequency) 크기를 3, 4, 5 중 무작위로 결정하여 컬러 밴딩 방지와 패턴 다양성을 확보합니다.
+        [원본 조건부 극좌표계 HSL 왜곡 (Conditional Polar HSL Shift)]
+        실제 사진 보정에서 발생하는 '특정 색상 영역의 틀어짐'을 모사합니다.
+        왜곡의 기준점(Condition)을 항상 '원본(Target)'에 두어,
+        AI가 픽셀 간의 구조적 관계를 통해 명확한 역함수를 추론할 수 있도록 유도합니다.
         """
         B = input_t.shape[0]
         device, dtype = input_t.device, input_t.dtype
 
-        # 색공간을 쪼개는 주파수 동적 할당 (3: 광범위한 변형, 5: 국소적인 변형)
+        # 1. 색공간을 분할하는 주파수를 동적으로 할당하여(3~5),
+        # 광범위한 톤 변화부터 국소적인 색상 틀어짐까지 다채로운 패턴을 생성합니다.
         ctrl_res = random.randint(3, 5)
+        polar_grid = self._make_hsl_grid(B, strength, ctrl_res, device, dtype)
 
-        offset_grid = self._make_hsl_grid(B, strength, ctrl_res, device, dtype)
-
-        # 오프셋 샘플링의 기준점은 항상 '원본(Target)'의 a, b 좌표를 활용합니다.
+        # 2. 원본(Target)의 깨끗한 a, b 좌표를 나침반 삼아,
+        # 2D 왜곡 맵에서 해당 픽셀이 받아야 할 극좌표 변형의 크기를 샘플링합니다.
         ab_coords_tgt = target_t[:, 1:3, :, :].permute(0, 2, 3, 1)
 
-        delta_lab = F.grid_sample(
-            offset_grid,
+        sampled_vars = F.grid_sample(
+            polar_grid,
             ab_coords_tgt,
             mode="bilinear",
             padding_mode="border",
             align_corners=True,
         )
 
-        # 원본 구조 기반으로 계산된 델타를 망가진 이미지에 덧입힙니다 (Out-of-place)
-        return input_t + delta_lab
+        delta_L = sampled_vars[:, 0, :, :]
+        scale_C = sampled_vars[:, 1, :, :]
+        rot_h = sampled_vars[:, 2, :, :]
+
+        # 3. 망가진 입력(Input)의 직교 좌표를 극좌표(채도, 색조)로 치환합니다.
+        L_in, a_in, b_in = torch.unbind(input_t, dim=1)
+
+        # 원점(무채색)에서의 미분 불가능성과 0으로 나누기 오류를 방지합니다.
+        C_in = torch.sqrt(a_in**2 + b_in**2 + 1e-8)
+        h_in = torch.atan2(b_in, a_in)
+
+        # 4. 물리적 왜곡 적용
+        # 채도의 붕괴 없이 본연의 깊이를 조율하고, 색조의 위상을 부드럽게 회전시킵니다.
+        L_out = L_in + delta_L
+        C_out = C_in * scale_C
+        h_out = h_in + rot_h
+
+        # 5. 직교 좌표계 복원
+        # 정보의 비가역적 소실을 막기 위해 클리핑(Clamp)을 배제하여 무한한 그라디언트를 보존합니다.
+        a_out = C_out * torch.cos(h_out)
+        b_out = C_out * torch.sin(h_out)
+
+        return torch.stack([L_out, a_out, b_out], dim=1)
 
     # =================================================================
     # 3. Global Color Wheels Operation (Split Toning)
@@ -238,33 +255,36 @@ class BakeAugment(nn.Module):
     # =================================================================
     # 4. Pipeline Execution
     # =================================================================
-    def apply_oklabp_curve(self, input_t, target_t):
+    def apply_oklabp_curve(self, input_t, target_t, strength=0.10):
         """
-        [원본 조건부 베이스 커브 적용]
-        전체적인 대비와 전역 색온도 왜곡을 수행합니다.
-        원본을 곡선에 통과시켜 이상적인 변화량(Delta)을 구한 뒤 적용하여,
-        과도한 정보 소실로 인한 AI의 블러(Blur) 생성을 원천 차단합니다.
+        [원본 조건부 글로벌 톤 & 화이트 밸런스 왜곡]
+        L(명도) 채널: 원본을 기준으로 1D S/역S 곡선을 적용하여 비선형적으로 왜곡합니다.
+        a, b(색상) 채널: 강도(strength)에 비례하는 단일 스칼라 오프셋(Translation)을 더해
+        전역적인 색온도 및 틴트의 틀어짐을 모사합니다.
         """
         B = input_t.shape[0]
         device, dtype = input_t.device, input_t.dtype
 
-        L_tgt, a_tgt, b_tgt = torch.unbind(target_t, dim=1)
+        L_tgt = target_t[:, 0, :, :]
         L_in, a_in, b_in = torch.unbind(input_t, dim=1)
 
-        # 1. 명도(L) 대비 왜곡
-        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, 0.10, device, dtype)
+        # 1. L 채널: 명암 및 대비의 비선형 왜곡 (Global Tone Curve)
+        # 통제 변수 strength를 곡선의 최대 진폭 한계치로 전달합니다.
+        ctrl_x_L, ctrl_y_L = self._make_random_curve(B, 399, strength, device, dtype)
         delta_L = self._apply_curve(L_tgt, ctrl_x_L, ctrl_y_L) - L_tgt
         L_out = L_in + delta_L
 
-        # 2. a채널(Green-Red) 균형 왜곡
-        ctrl_x_a, ctrl_y_a = self._make_random_curve(B, 399, 0.10, device, dtype)
-        delta_a = self._apply_curve(a_tgt, ctrl_x_a, ctrl_y_a) - a_tgt
-        a_out = a_in + delta_a
+        # 2. a, b 채널: 전역 화이트 밸런스 틀어짐 (Global Color Shift)
+        # strength를 기준으로 평행 이동의 범위를 [-strength/2, +strength/2]로 동기화합니다.
+        shift_a = (torch.rand(B, 1, 1, device=device, dtype=dtype) * strength) - (
+            strength / 2.0
+        )
+        shift_b = (torch.rand(B, 1, 1, device=device, dtype=dtype) * strength) - (
+            strength / 2.0
+        )
 
-        # 3. b채널(Blue-Yellow) 균형 왜곡
-        ctrl_x_b, ctrl_y_b = self._make_random_curve(B, 399, 0.10, device, dtype)
-        delta_b = self._apply_curve(b_tgt, ctrl_x_b, ctrl_y_b) - b_tgt
-        b_out = b_in + delta_b
+        a_out = a_in + shift_a
+        b_out = b_in + shift_b
 
         return torch.stack([L_out, a_out, b_out], dim=1)
 
@@ -292,7 +312,7 @@ class BakeAugment(nn.Module):
 
         # --- [순차적 열화 파이프라인 (Degradation Pipeline)] ---
         degradations = [
-            lambda inp: self.apply_oklabp_curve(inp, target),
+            lambda inp: self.apply_oklabp_curve(inp, target, strength=0.10),
             lambda inp: self.apply_hsl(inp, target, strength=0.10),
             lambda inp: self.apply_color_wheels(inp, target, strength=0.10),
         ]
@@ -301,7 +321,5 @@ class BakeAugment(nn.Module):
 
         for apply_degradation in degradations:
             input_t = apply_degradation(input_t)
-
-        input_t = input_t.clamp(-1.0, 1.0)
 
         return input_t, target
