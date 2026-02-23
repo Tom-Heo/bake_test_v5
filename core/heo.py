@@ -15,10 +15,10 @@ class Heo:
         def __init__(self, dim: int):
             super().__init__()
 
-            self.alpha = nn.Parameter(torch.full((dim,), 0.9))
-            self.beta = nn.Parameter(torch.full((dim,), -0.9))
-            self.redweight = nn.Parameter(torch.empty(dim).normal_(mean=0.0, std=0.45))
-            self.blueweight = nn.Parameter(torch.empty(dim).normal_(mean=0.0, std=0.45))
+            self.alpha = nn.Parameter(torch.full((dim,), 1.3))
+            self.beta = nn.Parameter(torch.full((dim,), -1.3))
+            self.redweight = nn.Parameter(torch.empty(dim).normal_(mean=0.0, std=0.75))
+            self.blueweight = nn.Parameter(torch.empty(dim).normal_(mean=0.0, std=0.75))
             self.redgelu = nn.GELU()
             self.bluegelu = nn.GELU()
 
@@ -49,10 +49,10 @@ class Heo:
             self.channels = c
 
             # 원본 HeLU와 같은 파라미터 의미(채널별)
-            self.alpha = nn.Parameter(torch.full((c,), 0.9))
-            self.beta = nn.Parameter(torch.full((c,), -0.9))
-            self.redweight = nn.Parameter(torch.empty(c).normal_(mean=0.0, std=0.45))
-            self.blueweight = nn.Parameter(torch.empty(c).normal_(mean=0.0, std=0.45))
+            self.alpha = nn.Parameter(torch.full((c,), 1.3))
+            self.beta = nn.Parameter(torch.full((c,), -1.3))
+            self.redweight = nn.Parameter(torch.empty(c).normal_(mean=0.0, std=0.75))
+            self.blueweight = nn.Parameter(torch.empty(c).normal_(mean=0.0, std=0.75))
 
             self.redgelu = nn.GELU()
             self.bluegelu = nn.GELU()
