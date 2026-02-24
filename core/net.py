@@ -54,6 +54,7 @@ class BakeNet(nn.Module):
 
         # 3. Head (The Finish)
         # 30ch -> 3ch Output
+        self.head_embedding = BakedBaseColortoColorEmbedding(dim)
         self.head_conv = nn.Conv2d(dim * 2, dim, 1, 1)
         self.head_act = Heo.HeLU2d(dim)
         self.head = BakedBaseColortoPerceptualOklabP(in_dim=dim, out_dim=3)
@@ -91,7 +92,7 @@ class BakeNet(nn.Module):
             # 2. Residual Connection
             feat = self.residual_gates[i](nemo_out, feat)
 
-        feat = torch.cat([feat, emb0], dim=1)
+        feat = torch.cat([feat, self.head_embedding(base)], dim=1)
         feat = self.head_conv(feat)
         feat = self.head_act(feat)
 
