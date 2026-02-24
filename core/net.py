@@ -22,18 +22,16 @@ class BakeNet(nn.Module):
 
         # 2. Components for the Body (The Loop)
 
-        # A. Embedding Modules (50개)
-        # 매 층마다 원본(Base)에서 문맥을 추출
-        self.embedding_modules = nn.ModuleList(
-            [BakedBaseColortoColorEmbedding(dim) for _ in range(depth)]
-        )
+        # A. Embedding Module
+        # 원본(Base)에서 문맥을 추출
+        self.embedding_module = BakedBaseColortoColorEmbedding(dim)
 
-        # B. Context Gates (50개) - [수정됨] 0번 블록 포함
+        # B. Context Gate
         # 추출된 문맥(Embedding)과 주 흐름(Stream)을 혼합
-        self.context_gates = nn.ModuleList([Heo.HeoGate2d(dim) for _ in range(depth)])
+        self.context_gate = Heo.HeoGate2d(dim)
 
         # C. NeMO Blocks (50개)
-        # 국소적 디테일 복원 — 대칭 커널 패턴 (3→5→7→9→11→11→9→7→5→3) x5
+        # 국소적 디테일 복원 — 대칭 커널 패턴
         _nemo_cycle = [
             Heo.NeMO33,
             Heo.NeMO55,
@@ -67,13 +65,13 @@ class BakeNet(nn.Module):
         base = self.stem(x)
 
         # B. Initialization (0-th Block)
-        # 1. 첫 번째 문맥 추출
-        emb0 = self.embedding_modules[0](base)
+        # 1. Embedding
+        emb0 = self.embedding_module(base)
 
-        # 2. 첫 번째 Gating: [Embedding vs Base]
-        # 지시사항: "context_gates[0](emb0, base)"
+        # 2. Gating: [Embedding vs Base]
+        # 지시사항: "context_gate(emb0, base)"
         # 임베딩(emb0)을 주체로 하되, 원본(base)을 참조하여 초기 신호를 형성
-        feat = self.context_gates[0](emb0, base)
+        feat = self.context_gate(emb0, base)
 
         # 3. NeMO Processing
         out0 = self.nemo_modules[0](feat)
@@ -84,18 +82,12 @@ class BakeNet(nn.Module):
 
         # C. The Loop (1 ~ 49 Block)
         for i in range(1, self.depth):
-            # 1. Context Extraction
-            emb = self.embedding_modules[i](base)
 
-            # 2. Context Injection: [Previous Feature vs New Embedding]
-            # 이전 흐름(feat)에 새로운 문맥(emb)을 주입
-            gated_input = self.context_gates[i](feat, emb)
+            # 1. NeMO Processing
+            nemo_out = self.nemo_modules[i](feat)
 
-            # 3. NeMO Processing
-            nemo_out = self.nemo_modules[i](gated_input)
+            # 2. Residual Connection
+            feat = self.residual_gates[i](nemo_out, feat)
 
-            # 4. Residual Connection
-            feat = self.residual_gates[i](nemo_out, gated_input)
-
-        # D. Residual + Head (0.2x Boost)
+        # D. Residual + Head (0.25x Boost)
         return x + 0.25 * self.head(feat)
