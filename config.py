@@ -18,8 +18,8 @@ class Config:
     # -------------------------------------------------------------------------
     # [Data Settings]
     # -------------------------------------------------------------------------
-    # v5 모델의 Body 연산량과 96ch Loss 메모리 부하를 고려하여 안정적인 1로 설정
-    BATCH_SIZE = 16
+    # v5 모델의 Body 연산량과 96ch Loss 메모리 부하를 고려하여 안정적인 4로 설정
+    BATCH_SIZE = 4
     ACCUM_STEPS = (
         1  # Gradient Accumulation: effective batch size = BATCH_SIZE * ACCUM_STEPS
     )
