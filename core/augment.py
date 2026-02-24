@@ -322,4 +322,4 @@ class BakeAugment(nn.Module):
         for apply_degradation in degradations:
             input_t = apply_degradation(input_t)
 
-        return 0.8 * input_t + 0.1 * target, target
+        return 0.6 * input_t + 0.3 * target, target
