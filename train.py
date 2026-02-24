@@ -143,7 +143,6 @@ def train(args):
                 input_oklabp, target_oklabp = augmentor(clean_batch)
 
             pred_oklabp = model(input_oklabp)
-            pred_oklabp = pred_oklabp
             loss = criterion(pred_oklabp, target_oklabp)
 
             if torch.isnan(loss):
