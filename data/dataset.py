@@ -48,11 +48,11 @@ class BakeDataset(Dataset):
         else:
             return 2
 
-    def _get_random_crop(self, img: Image.Image, size=256) -> Image.Image:
+    def _get_random_crop(self, img: Image.Image, size=512) -> Image.Image:
         """
         [CPU-Side Crop]
         DataLoader가 배치를 구성하려면 모든 텐서의 크기가 같아야 하므로,
-        여기서 1차적으로 256x256 크기로 잘라서 보냅니다.
+        여기서 1차적으로 512x512 크기로 잘라서 보냅니다.
         """
         w, h = img.size
 

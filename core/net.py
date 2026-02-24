@@ -11,7 +11,7 @@ from .bake import (
 
 
 class BakeNet(nn.Module):
-    def __init__(self, depth=50, dim=30):
+    def __init__(self, depth=30, dim=30):
         super().__init__()
         self.depth = depth
         self.dim = dim
@@ -30,7 +30,7 @@ class BakeNet(nn.Module):
         # 추출된 문맥(Embedding)과 주 흐름(Stream)을 혼합
         self.context_gate = Heo.HeoGate2d(dim)
 
-        # C. NeMO Blocks (50개)
+        # C. NeMO Blocks
         # 국소적 디테일 복원 — 대칭 커널 패턴
         _nemo_cycle = [
             Heo.NeMO33,
@@ -48,7 +48,7 @@ class BakeNet(nn.Module):
             [cls(dim) for cls in _nemo_cycle for _ in range(depth // 10)]
         )
 
-        # D. Residual Gates (50개)
+        # D. Residual Gates
         # 연산 전후의 차이를 학습 (Gradient Flow 보장)
         self.residual_gates = nn.ModuleList([Heo.HeoGate2d(dim) for _ in range(depth)])
 
@@ -80,7 +80,7 @@ class BakeNet(nn.Module):
         # NeMO 출력과 입력(feat)을 결합하여 흐름을 시작
         feat = self.residual_gates[0](out0, feat)
 
-        # C. The Loop (1 ~ 49 Block)
+        # C. The Loop
         for i in range(1, self.depth):
 
             # 1. NeMO Processing
