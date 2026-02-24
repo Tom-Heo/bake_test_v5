@@ -34,16 +34,18 @@ class BakeLoss(nn.Module):
         Input: (B, 3, H, W) - Normalized OklabP [-1, 1]
         """
 
+        loss_3 = self.criterion(pred, target)
+
         # A. Projection to Hyper-Baked Space (96ch)
         # Prediction은 Gradient가 흘러야 함
-        pred_baked = self.projector(pred)
+        pred_baked_96 = self.projector(pred)
 
         # Target은 고정된 정답이므로 Gradient 차단 (VRAM 절약)
         with torch.no_grad():
-            target_baked = self.projector(target)
+            target_baked_96 = self.projector(target)
 
         # B. Calculate HeoLoss
         # 96채널 전체에 대해 Robust Loss 계산
-        loss = self.criterion(pred_baked, target_baked)
+        loss_96 = self.criterion(pred_baked_96, target_baked_96)
 
-        return loss
+        return 0.9 * loss_3 + 0.1 * loss_96
