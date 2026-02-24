@@ -54,7 +54,8 @@ class BakeNet(nn.Module):
 
         # 3. Head (The Finish)
         # 30ch -> 3ch Output
-        self.head_gate = Heo.HeoGate2d(dim)
+        self.head_conv = nn.Conv2d(dim * 2, dim, 1, 1)
+        self.head_act = Heo.HeLU2d(dim)
         self.head = BakedBaseColortoPerceptualOklabP(in_dim=dim, out_dim=3)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -90,7 +91,9 @@ class BakeNet(nn.Module):
             # 2. Residual Connection
             feat = self.residual_gates[i](nemo_out, feat)
 
-        feat = self.head_gate(feat, emb0)
+        feat = torch.cat([feat, emb0], dim=1)
+        feat = self.head_conv(feat)
+        feat = self.head_act(feat)
 
         # D. Residual + Head (0.25x Boost)
         return x + 0.25 * self.head(feat)

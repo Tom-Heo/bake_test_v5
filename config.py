@@ -23,7 +23,7 @@ class Config:
     ACCUM_STEPS = (
         1  # Gradient Accumulation: effective batch size = BATCH_SIZE * ACCUM_STEPS
     )
-    NUM_WORKERS = 32  # 데이터 로더 워커 수
+    NUM_WORKERS = 16  # 데이터 로더 워커 수
 
     # -------------------------------------------------------------------------
     # [Model Settings]
