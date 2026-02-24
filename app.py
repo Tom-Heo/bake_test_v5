@@ -126,7 +126,7 @@ def _infer(tensor: torch.Tensor, model, to_oklabp, to_rgb, device) -> torch.Tens
 
     with torch.no_grad():
         oklabp = to_oklabp(padded)
-        restored = model(0.3 * oklabp)
+        restored = model(oklabp)
         rgb = to_rgb(restored)
 
     return unpad_image(rgb, org_size).clamp(0.0, 1.0).cpu()
