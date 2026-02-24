@@ -15,8 +15,8 @@ class Heo:
         def __init__(self, dim: int):
             super().__init__()
 
-            self.alpha = nn.Parameter(torch.full((dim,), 1.3))
-            self.beta = nn.Parameter(torch.full((dim,), -1.3))
+            self.alpha = nn.Parameter(torch.full((dim,), 1.0))
+            self.beta = nn.Parameter(torch.full((dim,), -1.0))
             self.redweight = nn.Parameter(torch.empty(dim).normal_(mean=0.0, std=0.75))
             self.blueweight = nn.Parameter(torch.empty(dim).normal_(mean=0.0, std=0.75))
             self.redgelu = nn.GELU()
@@ -49,8 +49,8 @@ class Heo:
             self.channels = c
 
             # 원본 HeLU와 같은 파라미터 의미(채널별)
-            self.alpha = nn.Parameter(torch.full((c,), 1.3))
-            self.beta = nn.Parameter(torch.full((c,), -1.3))
+            self.alpha = nn.Parameter(torch.full((c,), 1.0))
+            self.beta = nn.Parameter(torch.full((c,), -1.0))
             self.redweight = nn.Parameter(torch.empty(c).normal_(mean=0.0, std=0.75))
             self.blueweight = nn.Parameter(torch.empty(c).normal_(mean=0.0, std=0.75))
 
@@ -86,8 +86,8 @@ class Heo:
         def __init__(self, dim: int):
             super().__init__()
 
-            self.alpha = nn.Parameter(torch.full((dim,), 1.3))
-            self.beta = nn.Parameter(torch.full((dim,), -1.3))
+            self.alpha = nn.Parameter(torch.full((dim,), 1.0))
+            self.beta = nn.Parameter(torch.full((dim,), -1.0))
 
         def forward(self, x: torch.Tensor, raw: torch.Tensor):
             alpha = torch.tanh(sqrt(3.0) * self.alpha) + 1.0
@@ -100,8 +100,8 @@ class Heo:
             c = int(channels)
             self.channels = c
 
-            self.alpha = nn.Parameter(torch.full((c,), 1.3))
-            self.beta = nn.Parameter(torch.full((c,), -1.3))
+            self.alpha = nn.Parameter(torch.full((c,), 1.0))
+            self.beta = nn.Parameter(torch.full((c,), -1.0))
 
         def forward(self, x: torch.Tensor, raw: torch.Tensor):
             if x.dim() != 4 or x.size(1) != self.channels:

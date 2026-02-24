@@ -122,7 +122,12 @@ class BakedBaseColortoPerceptualOklabP(nn.Module):
         self.act2 = Heo.HeLU2d(in_dim)
         self.gate2 = Heo.HeoGate2d(in_dim)
 
-        # Stage 3: Final Projection (30->3)
+        # Stage 3: Deep Mixing (30->30)
+        self.conv3 = nn.Conv2d(in_dim, in_dim, 1, 1)
+        self.act3 = Heo.HeLU2d(in_dim)
+        self.gate3 = Heo.HeoGate2d(in_dim)
+
+        # Stage 4: Final Projection (30->3)
         # 마지막은 Gate나 Act 없이 순수 선형 변환으로 값을 매핑
         self.head = nn.Conv2d(in_dim, out_dim, 1, 1)
 
@@ -140,7 +145,11 @@ class BakedBaseColortoPerceptualOklabP(nn.Module):
         x2 = self.gate2(x2, x1)
 
         # Stage 3 (Projection)
-        out = self.head(x2)
+        x3 = self.conv3(x2)
+        x3 = self.act3(x3)
+        x3 = self.gate3(x3, x2)
+
+        out = self.head(x3)
 
         return out
 
